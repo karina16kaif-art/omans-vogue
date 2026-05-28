@@ -1,0 +1,16 @@
+{
+  "name": "omans-vogue",
+  "version": "1.0.0",
+  "description": "OMAN'S VOGUE Premium Luxury Perfume Store",
+  "main": "index.js",
+  "scripts": {
+    "install-all": "npm install --cache .npm-cache && npm install --prefix backend --cache .npm-cache && npm install --prefix frontend --cache .npm-cache",
+    "dev": "concurrently \"npm run dev --prefix backend\" \"npm run dev --prefix frontend\"",
+    "build": "npm run build --prefix frontend",
+    "start": "npm run start --prefix backend"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "nodemon": "^3.1.0"
+  }
+}

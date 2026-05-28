@@ -1,0 +1,172 @@
+[
+  {
+    "id": 1,
+    "name": "Covered In Roses",
+    "category": "Women",
+    "price": 180,
+    "inStock": true,
+    "description": "An opulent, passionate fragrance that drapes your senses in freshly cut ruby roses, sweet berries, and soft warm amber.",
+    "notes": "Red Rose Petals, Sun-Ripened Berries, Velvet Amber",
+    "image": "/images/products/women_placeholder.png"
+  },
+  {
+    "id": 2,
+    "name": "You’re The One",
+    "category": "Women",
+    "price": 180,
+    "inStock": true,
+    "description": "A beautiful, self-assured fragrance. A confident blend of velvet rose, white birch, and a drop of sweet strawberry nectar.",
+    "notes": "Velvet Rose, White Birch, Strawberry Nectar",
+    "image": "/images/products/women_placeholder.png"
+  },
+  {
+    "id": 3,
+    "name": "Champagne Toast",
+    "category": "Women",
+    "price": 180,
+    "inStock": true,
+    "description": "A celebratory spritz of bubbly champagne, sparkling berries, and juicy tangerine that evokes pure bliss and confidence.",
+    "notes": "Bubbly Champagne, Sparkling Berries, Tangerine",
+    "image": "/images/products/women_placeholder.png"
+  },
+  {
+    "id": 4,
+    "name": "Strawberry Pound Cake",
+    "category": "Women",
+    "price": 180,
+    "inStock": true,
+    "description": "A sweet, comforting treat of golden shortcake, rich whipped cream, and fresh vine-ripened strawberries.",
+    "notes": "Fresh Strawberries, Golden Shortcake, Whipped Cream",
+    "image": "/images/products/women_placeholder.png"
+  },
+  {
+    "id": 5,
+    "name": "Warm Vanilla Sugar",
+    "category": "Women",
+    "price": 180,
+    "inStock": true,
+    "description": "An iconic, comforting blend of creamy vanilla, sweet coconut, and white orchid, grounded by fresh sandalwood.",
+    "notes": "Intense Vanilla, White Orchid, Sparkling Sugar, Sandalwood",
+    "image": "/images/products/women_placeholder.png"
+  },
+  {
+    "id": 6,
+    "name": "In The Stars",
+    "category": "Women",
+    "price": 180,
+    "inStock": true,
+    "description": "A sparkling blend of starflower, sandalwood musk, sugared tangelo, white agarwood, and warm radiant amber.",
+    "notes": "Starflower, Sandalwood Musk, Sugared Tangelo, White Agarwood, Amber",
+    "image": "/images/products/women_placeholder.png"
+  },
+  {
+    "id": 7,
+    "name": "Vanilla Romance",
+    "category": "Women",
+    "price": 180,
+    "inStock": true,
+    "description": "A captivating, seductive vanilla laced with spicy cardamom, rich woods, and midnight jasmine.",
+    "notes": "Madagascar Vanilla, Cardamom, Velvet Woods, Midnight Jasmine",
+    "image": "/images/products/women_placeholder.png"
+  },
+  {
+    "id": 8,
+    "name": "A Thousand Wishes",
+    "category": "Women",
+    "price": 180,
+    "inStock": true,
+    "description": "Warm your heart a thousand times over with a festive blend of pink champagne, crystal peonies, and almond crème.",
+    "notes": "Pink Champagne, Crystal Peonies, Velvet Amaretto, Almond Crème",
+    "image": "/images/products/women_placeholder.png"
+  },
+  {
+    "id": 9,
+    "name": "Floral Fantasy",
+    "category": "Women",
+    "price": 180,
+    "inStock": true,
+    "description": "An ethereal garden breeze carrying notes of freshly bloomed lilies, dewy cherry blossoms, and sweet morning rainfall.",
+    "notes": "Dewy Lilies, Cherry Blossom, Morning Rainfall, Sweet Oakmoss",
+    "image": "/images/products/women_placeholder.png"
+  },
+  {
+    "id": 10,
+    "name": "Gingham",
+    "category": "Women",
+    "price": 180,
+    "inStock": true,
+    "description": "A fresh, vibrant, and happy celebration of bright blue freesia, sweet clementine, and soft violet petals.",
+    "notes": "Blue Freesia, Sweet Clementine, Soft Violet Petals",
+    "image": "/images/products/women_placeholder.png"
+  },
+  {
+    "id": 11,
+    "name": "Pure Wonder",
+    "category": "Women",
+    "price": 180,
+    "inStock": true,
+    "description": "Delight in a sense of wonder with this clean, sparkling blend of iced rosé, star jasmine, and warm white amber.",
+    "notes": "Iced Rosé, Star Jasmine, Warm White Amber",
+    "image": "/images/products/women_placeholder.png"
+  },
+  {
+    "id": 12,
+    "name": "Pink Tie Dye",
+    "category": "Women",
+    "price": 180,
+    "inStock": true,
+    "description": "A fun, artistic fragrance swirling with sun-kissed pink lady apples, wild cotton flower, and sweet sugar cane.",
+    "notes": "Pink Lady Apple, Wild Cotton Flower, Sugared Cane",
+    "image": "/images/products/women_placeholder.png"
+  },
+  {
+    "id": 13,
+    "name": "Touch Of Gold",
+    "category": "Women",
+    "price": 180,
+    "inStock": true,
+    "description": "Pure luxury bottled. Radiate majesty with golden honey, absolute jasmine, and a heavy trail of royal patchouli and musk.",
+    "notes": "Golden Honey, Absolute Jasmine, Royal Patchouli, Warm Musk",
+    "image": "/images/products/women_placeholder.png"
+  },
+  {
+    "id": 14,
+    "name": "First Sight",
+    "category": "Men",
+    "price": 150,
+    "inStock": true,
+    "description": "A magnetic and unforgettable first impression of fresh cedarwood, aromatic sage, and crisp mountain air.",
+    "notes": "Fresh Cedarwood, Aromatic Sage, Crisp Air, Bergamot",
+    "image": "/images/products/men_placeholder.png"
+  },
+  {
+    "id": 15,
+    "name": "Graphite",
+    "category": "Men",
+    "price": 150,
+    "inStock": true,
+    "description": "A bold, sophisticated blend of dark sage, rich leather, bergamot, and precious cedarwood.",
+    "notes": "Dark Sage, Rich Leather, Italian Bergamot, Cedarwood",
+    "image": "/images/products/men_placeholder.png"
+  },
+  {
+    "id": 16,
+    "name": "Black Tie",
+    "category": "Men",
+    "price": 150,
+    "inStock": true,
+    "description": "An elegant, formal fragrance featuring aromatic sage, warm tonka bean, rich sandalwood, and dark incense.",
+    "notes": "Aromatic Sage, Dark Tonka Bean, Sandalwood, Incense",
+    "image": "/images/products/men_placeholder.png"
+  },
+  {
+    "id": 17,
+    "name": "prove dem wrong",
+    "category": "Men",
+    "price": 200,
+    "inStock": true,
+    "description": "",
+    "notes": "",
+    "image": "/uploads/products/product-1780006545978-213329453.png"
+  }
+]

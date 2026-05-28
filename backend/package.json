@@ -1,0 +1,18 @@
+{
+  "name": "omans-vogue-backend",
+  "version": "1.0.0",
+  "description": "OMAN'S VOGUE Luxury Perfume Server API",
+  "main": "server.js",
+  "scripts": {
+    "dev": "nodemon server.js",
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "body-parser": "^1.20.2",
+    "cors": "^2.8.5",
+    "dotenv": "^17.4.2",
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.3",
+    "multer": "^1.4.5-lts.1"
+  }
+}
