@@ -1,20 +1,22 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { X, ShieldCheck, Wallet, CreditCard, Send, CheckCircle2 } from 'lucide-react';
-import confetti from 'canvas-confetti';
+import { api } from '../lib/api';
 
-const CheckoutModal = ({ isOpen, onClose, cartItems, onClearCart }) => {
-  if (!isOpen) return null;
-
-  const WHATSAPP_NUMBER = '+233591259991';
+const CheckoutModal = ({ isOpen, onClose, cartItems, onClearCart, brandSettings }) => {
+  const WHATSAPP_NUMBER = brandSettings?.whatsappNumber || '+233591259991';
+  const brandName = brandSettings?.brandName || "OMAN'S VOGUE";
 
   // Step state: 'billing' | 'success'
   const [step, setStep] = useState('billing');
   const [paymentMethod, setPaymentMethod] = useState('momo'); // 'momo' | 'card'
+  const [submitting, setSubmitting] = useState(false);
+  const [checkoutError, setCheckoutError] = useState('');
 
   // Input states
   const [formData, setFormData] = useState({
     name: '',
     phone: '',
+    deliveryPhone: '',
     address: '',
     city: '',
     momoProvider: 'MTN',
@@ -30,42 +32,49 @@ const CheckoutModal = ({ isOpen, onClose, cartItems, onClearCart }) => {
     setFormData(prev => ({ ...prev, [name]: value }));
   };
 
-  const total = cartItems.reduce((acc, item) => acc + (item.price * item.quantity), 0);
+  const total = useMemo(
+    () => cartItems.reduce((acc, item) => acc + (item.price * item.quantity), 0),
+    [cartItems]
+  );
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
+  const runConfetti = () => {
+    import('canvas-confetti').then(({ default: confetti }) => {
+      const duration = 2.5 * 1000;
+      const end = Date.now() + duration;
 
-    // Trigger rose gold / gold luxury confetti burst!
-    const duration = 2.5 * 1000;
-    const end = Date.now() + duration;
+      (function frame() {
+        confetti({
+          particleCount: 3,
+          angle: 60,
+          spread: 55,
+          origin: { x: 0 },
+          colors: ['#b76e79', '#d4af37', '#ebd2b0']
+        });
+        confetti({
+          particleCount: 3,
+          angle: 120,
+          spread: 55,
+          origin: { x: 1 },
+          colors: ['#b76e79', '#d4af37', '#ebd2b0']
+        });
 
-    (function frame() {
-      confetti({
-        particleCount: 3,
-        angle: 60,
-        spread: 55,
-        origin: { x: 0 },
-        colors: ['#b76e79', '#d4af37', '#ebd2b0']
-      });
-      confetti({
-        particleCount: 3,
-        angle: 120,
-        spread: 55,
-        origin: { x: 1 },
-        colors: ['#b76e79', '#d4af37', '#ebd2b0']
-      });
+        if (Date.now() < end) {
+          requestAnimationFrame(frame);
+        }
+      }());
+    }).catch(() => {});
+  };
 
-      if (Date.now() < end) {
-        requestAnimationFrame(frame);
-      }
-    }());
-
-    // Build the beautiful WhatsApp Order Invoice Text
-    let orderDetails = `*👑 OMAN'S VOGUE - ORDER INVOICE* \n`;
+  const buildWhatsAppInvoice = (order) => {
+    let orderDetails = `*${brandName} - ORDER INVOICE* \n`;
     orderDetails += `--------------------------------------\n`;
+    if (order?.id) {
+      orderDetails += `*Order ID:* ${order.id}\n`;
+    }
     orderDetails += `*Customer Details:*\n`;
     orderDetails += `• Name: ${formData.name}\n`;
-    orderDetails += `• Delivery Phone: ${formData.phone}\n`;
+    orderDetails += `• Customer Phone: ${formData.phone}\n`;
+    orderDetails += `• Delivery Phone: ${formData.deliveryPhone || formData.phone}\n`;
     orderDetails += `• Destination: ${formData.address}, ${formData.city}\n`;
     orderDetails += `\n*Payment Details:*\n`;
     orderDetails += `• Method: ${paymentMethod === 'momo' ? `Mobile Money (${formData.momoProvider})` : 'Visa / Mastercard'}\n`;
@@ -84,17 +93,78 @@ const CheckoutModal = ({ isOpen, onClose, cartItems, onClearCart }) => {
     orderDetails += `--------------------------------------\n`;
     orderDetails += `Please confirm my payment and expedite delivery! Thank you.`;
 
-    const encodedText = encodeURIComponent(orderDetails);
+    return encodeURIComponent(orderDetails);
+  };
 
-    // Transition to Success step
-    setStep('success');
-
-    // Wait a brief second to allow user to see success pane, then trigger WhatsApp
+  const submitWhatsAppFallback = (order) => {
+    const encodedText = buildWhatsAppInvoice(order);
     setTimeout(() => {
       window.open(`https://wa.me/${WHATSAPP_NUMBER}?text=${encodedText}`, '_blank');
       onClearCart();
     }, 1500);
   };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setSubmitting(true);
+    setCheckoutError('');
+    runConfetti();
+
+    // Transition to Success step
+    setStep('success');
+
+    try {
+      const orderPayload = {
+        customer: {
+          name: formData.name,
+          phone: formData.phone,
+          deliveryPhone: formData.deliveryPhone || formData.phone,
+          deliveryAddress: formData.address,
+          cityRegion: formData.city
+        },
+        paymentMethod: paymentMethod === 'momo' ? `Mobile Money (${formData.momoProvider})` : 'Visa / Mastercard',
+        items: cartItems.map(item => ({
+          productId: item.id,
+          name: item.name,
+          category: item.category,
+          quantity: item.quantity,
+          unitPrice: Number(item.price),
+          image: item.image
+        }))
+      };
+
+      const orderResponse = await api.post('/api/orders', orderPayload);
+      const createdOrder = orderResponse.data?.order;
+
+      if (orderResponse.data?.hubtelConfigured && createdOrder?.id) {
+        try {
+          const hubtelResponse = await api.post('/api/payments/hubtel/initiate', {
+            orderId: createdOrder.id
+          });
+          const paymentUrl = hubtelResponse.data?.paymentUrl;
+          if (paymentUrl) {
+            setTimeout(() => {
+              onClearCart();
+              window.location.href = paymentUrl;
+            }, 1200);
+            return;
+          }
+        } catch (paymentError) {
+          console.warn('Hubtel payment failed, falling back to WhatsApp.', paymentError);
+        }
+      }
+
+      submitWhatsAppFallback(createdOrder);
+    } catch (error) {
+      console.error('Order creation failed:', error);
+      setCheckoutError('Order system is temporarily unavailable. Opening WhatsApp fallback.');
+      submitWhatsAppFallback(null);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -144,7 +214,7 @@ const CheckoutModal = ({ isOpen, onClose, cartItems, onClearCart }) => {
                   />
                 </div>
                 <div className="flex flex-col gap-1">
-                  <label className="text-[9px] uppercase text-luxury-champagne/50 tracking-wider font-semibold">Delivery Phone Number</label>
+                  <label className="text-[9px] uppercase text-luxury-champagne/50 tracking-wider font-semibold">Customer Phone Number</label>
                   <input
                     required
                     type="tel"
@@ -159,6 +229,17 @@ const CheckoutModal = ({ isOpen, onClose, cartItems, onClearCart }) => {
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="flex flex-col gap-1">
+                  <label className="text-[9px] uppercase text-luxury-champagne/50 tracking-wider font-semibold">Delivery Phone Number</label>
+                  <input
+                    type="tel"
+                    name="deliveryPhone"
+                    value={formData.deliveryPhone}
+                    onChange={handleInputChange}
+                    placeholder="+233 59 125 9991"
+                    className="px-4 py-2.5 bg-luxury-black border border-luxury-rosegold/10 text-white text-xs focus:border-luxury-rosegold focus:outline-none transition-all rounded-none"
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
                   <label className="text-[9px] uppercase text-luxury-champagne/50 tracking-wider font-semibold">Street Address / Landmark</label>
                   <input
                     required
@@ -170,6 +251,9 @@ const CheckoutModal = ({ isOpen, onClose, cartItems, onClearCart }) => {
                     className="px-4 py-2.5 bg-luxury-black border border-luxury-rosegold/10 text-white text-xs focus:border-luxury-rosegold focus:outline-none transition-all rounded-none"
                   />
                 </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="flex flex-col gap-1">
                   <label className="text-[9px] uppercase text-luxury-champagne/50 tracking-wider font-semibold">City / Region</label>
                   <input
@@ -228,7 +312,7 @@ const CheckoutModal = ({ isOpen, onClose, cartItems, onClearCart }) => {
                   {/* Instructions */}
                   <div className="text-[10px] text-luxury-champagne/60 leading-relaxed space-y-1">
                     <p className="font-semibold text-luxury-gold uppercase tracking-wider">MoMo Payment Directions:</p>
-                    <p>1. Please transfer absolute GHS total amount to: <strong className="text-white">+233 59 125 9991</strong></p>
+                    <p>1. Please transfer absolute GHS total amount to: <strong className="text-white">{WHATSAPP_NUMBER}</strong></p>
                     <p>2. Registered merchant name: <strong className="text-white">Eugenia A.</strong></p>
                     <p>3. Fill in your payment phone details below to submit reference verification.</p>
                   </div>
@@ -326,13 +410,20 @@ const CheckoutModal = ({ isOpen, onClose, cartItems, onClearCart }) => {
               <span className="font-serif text-lg font-black text-luxury-gold">GHS {total}.00</span>
             </div>
 
+            {checkoutError && (
+              <div className="p-3 border border-luxury-rosegold/25 bg-luxury-wine/10 text-luxury-rosegold text-[10px] uppercase tracking-widest">
+                {checkoutError}
+              </div>
+            )}
+
             {/* Confirm Submission */}
             <button
               type="submit"
+              disabled={submitting}
               className="w-full py-4 bg-gradient-to-r from-luxury-wine to-luxury-rosegold text-white text-xs uppercase tracking-widest font-black flex items-center justify-center gap-2 hover:shadow-[0_0_25px_rgba(183,110,121,0.4)] btn-shimmer transition-all"
             >
               <Send size={12} />
-              Confirm & Place Order on WhatsApp
+              {submitting ? 'Creating Secure Order...' : 'Confirm & Place Secure Order'}
             </button>
 
           </form>
@@ -345,7 +436,7 @@ const CheckoutModal = ({ isOpen, onClose, cartItems, onClearCart }) => {
             <div className="space-y-2">
               <h2 className="font-serif text-xl tracking-widest uppercase font-black text-white">ORDER TRANSMITTING</h2>
               <p className="text-xs text-luxury-champagne/60 leading-relaxed max-w-sm mx-auto font-light">
-                Your luxury fragrance ticket has been initialized. We are currently copying your shopping details and launching WhatsApp to complete delivery processing.
+                Your luxury fragrance ticket has been initialized. We are opening secure payment when available, or launching WhatsApp to complete delivery processing.
               </p>
             </div>
 

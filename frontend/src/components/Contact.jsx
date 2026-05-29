@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { Send, Instagram, Phone, MapPin, Mail, Sparkles, CheckCircle2 } from 'lucide-react';
 
-const Contact = () => {
-  const WHATSAPP_NUMBER = '+233591259991';
+const Contact = ({ brandSettings }) => {
+  const WHATSAPP_NUMBER = brandSettings?.whatsappNumber || '+233591259991';
+  const brandName = brandSettings?.brandName || "OMAN'S VOGUE";
   const INSTAGRAM_HANDLE = 'Eugeniaa..a';
 
   const [formState, setFormState] = useState({ name: '', email: '', message: '' });
@@ -22,7 +23,7 @@ const Contact = () => {
 
   const handleLiveChat = () => {
     const text = encodeURIComponent(
-      "Hello Oman's Vogue! I'd like to initiate a live consultation regarding perfume choices."
+      `Hello ${brandName}! I'd like to initiate a live consultation regarding perfume choices.`
     );
     window.open(`https://wa.me/${WHATSAPP_NUMBER}?text=${text}`, '_blank');
   };
@@ -47,7 +48,7 @@ const Contact = () => {
         <div className="lg:col-span-5 space-y-8">
           <div>
             <h3 className="font-serif text-lg tracking-wider text-luxury-gold uppercase font-bold mb-4">
-              OMAN’S VOGUE ATELIER
+              {brandName} ATELIER
             </h3>
             <p className="text-xs text-luxury-champagne/60 leading-relaxed font-light">
               Reach out to our concierge service for personal fragrance formulation consultations, wedding bulk packages, and secure dispatch inquiries.
@@ -63,7 +64,7 @@ const Contact = () => {
               <div>
                 <span className="text-[9px] uppercase tracking-wider text-luxury-champagne/40 block mb-0.5">WhatsApp Concierge</span>
                 <a href={`https://wa.me/${WHATSAPP_NUMBER}`} target="_blank" rel="noreferrer" className="text-xs font-mono text-white hover:text-luxury-gold transition-colors">
-                  +233 59 125 9991
+                  {WHATSAPP_NUMBER}
                 </a>
               </div>
             </div>

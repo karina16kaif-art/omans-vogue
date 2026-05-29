@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { ShoppingBag, Menu, X, ShieldAlert } from 'lucide-react';
 
-const Navbar = ({ activeSection, setActiveSection, cartCount, onOpenCart }) => {
+const Navbar = ({ activeSection, setActiveSection, cartCount, onOpenCart, brandSettings }) => {
   const [isScrolled, setIsScrolled] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const brandName = brandSettings?.brandName || "OMAN'S VOGUE";
 
   useEffect(() => {
     const handleScroll = () => {
@@ -55,7 +56,7 @@ const Navbar = ({ activeSection, setActiveSection, cartCount, onOpenCart }) => {
           className="flex items-center gap-2 cursor-pointer group"
         >
           <span className="text-2xl md:text-3xl font-serif font-black tracking-widest text-gold-gradient group-hover:scale-105 transition-transform duration-300">
-            OMAN'S VOGUE
+            {brandName}
           </span>
         </div>
 
@@ -132,7 +133,7 @@ const Navbar = ({ activeSection, setActiveSection, cartCount, onOpenCart }) => {
 
         <div className="border-t border-luxury-rosegold/10 pt-6">
           <p className="text-[10px] text-luxury-champagne/40 uppercase tracking-widest text-center">
-            OMAN'S VOGUE © 2026
+            {brandName} © 2026
           </p>
         </div>
       </div>

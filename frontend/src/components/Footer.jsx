@@ -1,8 +1,9 @@
 import React from 'react';
 import { ShieldCheck, ArrowUp } from 'lucide-react';
 
-const Footer = ({ setActiveSection }) => {
-  const WHATSAPP_NUMBER = '+233591259991';
+const Footer = ({ setActiveSection, brandSettings }) => {
+  const WHATSAPP_NUMBER = brandSettings?.whatsappNumber || '+233591259991';
+  const brandName = brandSettings?.brandName || "OMAN'S VOGUE";
   const INSTAGRAM_HANDLE = 'Eugeniaa..a';
 
   const scrollToTop = () => {
@@ -19,7 +20,7 @@ const Footer = ({ setActiveSection }) => {
         {/* Brand Column */}
         <div className="space-y-4 md:col-span-1">
           <span className="font-serif tracking-widest text-2xl font-black text-gold-gradient block">
-            OMAN'S VOGUE
+            {brandName}
           </span>
           <p className="text-[10px] text-luxury-champagne/50 font-light leading-relaxed">
             Crafting luxury fragrance collections to serve as daily sensory anchors aligning your posture with personal inner growth.
@@ -89,7 +90,7 @@ const Footer = ({ setActiveSection }) => {
             </li>
             <li>
               <a href={`https://wa.me/${WHATSAPP_NUMBER}`} target="_blank" rel="noreferrer" className="text-white font-mono hover:text-luxury-gold transition-colors">
-                Concierge Hotline: +233 59 125 9991
+                Concierge Hotline: {WHATSAPP_NUMBER}
               </a>
             </li>
             <li>
@@ -105,7 +106,7 @@ const Footer = ({ setActiveSection }) => {
         
         <div className="flex items-center gap-1.5 text-[9px] text-luxury-champagne/40 uppercase tracking-wider font-semibold">
           <ShieldCheck size={11} className="text-luxury-gold" />
-          <span>OMAN'S VOGUE © 2026. All rights secured.</span>
+          <span>{brandName} © 2026. All rights secured.</span>
         </div>
 
         {/* Scroll back to top button */}

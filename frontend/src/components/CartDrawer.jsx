@@ -1,6 +1,6 @@
 import React from 'react';
 import { X, Plus, Minus, Trash2, ShieldCheck, Send } from 'lucide-react';
-import { getAssetUrl } from '../lib/api';
+import { getAssetUrl, getWebPAssetUrl } from '../lib/api';
 
 const CartDrawer = ({ isOpen, onClose, cartItems, onUpdateQuantity, onRemoveItem, onCheckout }) => {
   if (!isOpen) return null;
@@ -57,62 +57,71 @@ const CartDrawer = ({ isOpen, onClose, cartItems, onUpdateQuantity, onRemoveItem
                 </button>
               </div>
             ) : (
-              cartItems.map((item) => (
-                <div 
-                  key={`${item.id}-${item.category}`}
-                  className="flex gap-4 pb-6 border-b border-luxury-rosegold/5 items-start group"
-                >
-                  {/* Thumbnail */}
-                  <div className="w-20 h-20 bg-luxury-black border border-luxury-rosegold/10 overflow-hidden flex-shrink-0 relative">
-                    <img 
-                      src={getAssetUrl(item.image)} 
-                      alt={item.name} 
-                      className="w-full h-full object-cover object-center group-hover:scale-105 transition-transform duration-300"
-                    />
-                  </div>
+              cartItems.map((item) => {
+                const itemWebPUrl = getWebPAssetUrl(item.image);
 
-                  {/* Info details */}
-                  <div className="flex-grow flex flex-col justify-between h-20 py-0.5">
-                    <div>
-                      <div className="flex justify-between items-start">
-                        <h4 className="font-serif text-xs tracking-wider text-white font-bold pr-2 truncate max-w-[160px]">
-                          {item.name}
-                        </h4>
-                        <button 
-                          onClick={() => onRemoveItem(item.id)}
-                          className="text-luxury-champagne/40 hover:text-luxury-rosegold transition-colors"
-                        >
-                          <Trash2 size={12} />
-                        </button>
-                      </div>
-                      <span className="text-[9px] uppercase tracking-wider text-luxury-rosegold font-medium">
-                        {item.category}'s Collection
-                      </span>
+                return (
+                  <div
+                    key={`${item.id}-${item.category}`}
+                    className="flex gap-4 pb-6 border-b border-luxury-rosegold/5 items-start group"
+                  >
+                    {/* Thumbnail */}
+                    <div className="w-20 h-20 bg-luxury-black border border-luxury-rosegold/10 overflow-hidden flex-shrink-0 relative">
+                      <picture className="block w-full h-full">
+                        {itemWebPUrl && <source srcSet={itemWebPUrl} type="image/webp" />}
+                        <img
+                          src={getAssetUrl(item.image)}
+                          alt={item.name}
+                          className="w-full h-full object-cover object-center group-hover:scale-105 transition-transform duration-300"
+                          loading="lazy"
+                          decoding="async"
+                        />
+                      </picture>
                     </div>
 
-                    <div className="flex items-center justify-between mt-auto">
-                      {/* Quantity Toggles */}
-                      <div className="flex items-center border border-luxury-rosegold/15 bg-luxury-black/50">
-                        <button 
-                          onClick={() => onUpdateQuantity(item.id, item.quantity - 1)}
-                          className="px-2 py-1 text-luxury-champagne/60 hover:text-white transition-colors"
-                        >
-                          <Minus size={10} />
-                        </button>
-                        <span className="px-2 text-[10px] font-bold text-white font-mono">{item.quantity}</span>
-                        <button 
-                          onClick={() => onUpdateQuantity(item.id, item.quantity + 1)}
-                          className="px-2 py-1 text-luxury-champagne/60 hover:text-white transition-colors"
-                        >
-                          <Plus size={10} />
-                        </button>
+                    {/* Info details */}
+                    <div className="flex-grow flex flex-col justify-between h-20 py-0.5">
+                      <div>
+                        <div className="flex justify-between items-start">
+                          <h4 className="font-serif text-xs tracking-wider text-white font-bold pr-2 truncate max-w-[160px]">
+                            {item.name}
+                          </h4>
+                          <button
+                            onClick={() => onRemoveItem(item.id)}
+                            className="text-luxury-champagne/40 hover:text-luxury-rosegold transition-colors"
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        </div>
+                        <span className="text-[9px] uppercase tracking-wider text-luxury-rosegold font-medium">
+                          {item.category}'s Collection
+                        </span>
                       </div>
-                      {/* Price subtotal */}
-                      <span className="font-serif text-xs font-bold text-luxury-gold">GHS {item.price * item.quantity}.00</span>
+
+                      <div className="flex items-center justify-between mt-auto">
+                        {/* Quantity Toggles */}
+                        <div className="flex items-center border border-luxury-rosegold/15 bg-luxury-black/50">
+                          <button
+                            onClick={() => onUpdateQuantity(item.id, item.quantity - 1)}
+                            className="px-2 py-1 text-luxury-champagne/60 hover:text-white transition-colors"
+                          >
+                            <Minus size={10} />
+                          </button>
+                          <span className="px-2 text-[10px] font-bold text-white font-mono">{item.quantity}</span>
+                          <button
+                            onClick={() => onUpdateQuantity(item.id, item.quantity + 1)}
+                            className="px-2 py-1 text-luxury-champagne/60 hover:text-white transition-colors"
+                          >
+                            <Plus size={10} />
+                          </button>
+                        </div>
+                        {/* Price subtotal */}
+                        <span className="font-serif text-xs font-bold text-luxury-gold">GHS {item.price * item.quantity}.00</span>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
 
@@ -174,4 +183,4 @@ const ShoppingBagIcon = () => (
   </svg>
 );
 
-export default CartDrawer;
+export default React.memo(CartDrawer);

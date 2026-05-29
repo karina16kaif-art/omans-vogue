@@ -11,22 +11,29 @@ const Particles = () => {
     const ctx = canvas.getContext('2d');
     let animationFrameId;
     let particles = [];
-    const particleCount = 80;
+    const getParticleCount = () => (window.innerWidth < 768 ? 36 : 80);
 
     // Resize Handler
     const handleResize = () => {
       canvas.width = window.innerWidth;
       canvas.height = window.innerHeight;
+      const nextCount = getParticleCount();
+      if (particles.length > nextCount) {
+        particles = particles.slice(0, nextCount);
+      }
+      while (particles.length < nextCount) {
+        particles.push(new Particle());
+      }
     };
-    window.addEventListener('resize', handleResize);
-    handleResize();
-
     // Mouse Movement Tracking
     const handleMouseMove = (e) => {
       mouseRef.current.targetX = e.clientX;
       mouseRef.current.targetY = e.clientY;
     };
-    window.addEventListener('mousemove', handleMouseMove);
+    const hasFinePointer = window.matchMedia('(pointer: fine)').matches;
+    if (hasFinePointer) {
+      window.addEventListener('mousemove', handleMouseMove);
+    }
 
     // Particle Class
     class Particle {
@@ -102,10 +109,8 @@ const Particles = () => {
       }
     }
 
-    // Populate particles list
-    for (let i = 0; i < particleCount; i++) {
-      particles.push(new Particle());
-    }
+    window.addEventListener('resize', handleResize);
+    handleResize();
 
     // Animation Loop
     const animate = () => {
@@ -138,7 +143,9 @@ const Particles = () => {
     // Clean up
     return () => {
       window.removeEventListener('resize', handleResize);
-      window.removeEventListener('mousemove', handleMouseMove);
+      if (hasFinePointer) {
+        window.removeEventListener('mousemove', handleMouseMove);
+      }
       cancelAnimationFrame(animationFrameId);
     };
   }, []);

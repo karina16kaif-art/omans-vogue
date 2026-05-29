@@ -56,11 +56,16 @@ const About = () => {
         {/* Narrative Image showcase */}
         <div className="relative aspect-[4/3] bg-luxury-black overflow-hidden border border-luxury-rosegold/10 group select-none pointer-events-none">
           <div className="absolute inset-0 bg-gradient-to-t from-luxury-black via-transparent to-transparent z-10" />
-          <img 
-            src="/images/products/women_placeholder.png" 
-            alt="Perfume Alchemist Room" 
-            className="w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-700"
-          />
+          <picture className="block w-full h-full">
+            <source srcSet="/images/products/women_placeholder.webp" type="image/webp" />
+            <img
+              src="/images/products/women_placeholder.png"
+              alt="Perfume Alchemist Room"
+              className="w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-700"
+              loading="lazy"
+              decoding="async"
+            />
+          </picture>
           <div className="absolute bottom-6 left-6 z-20">
             <span className="text-[8px] uppercase tracking-widest text-luxury-gold font-bold block mb-1">Our Creed</span>
             <span className="font-serif text-sm tracking-widest uppercase text-white font-bold block">

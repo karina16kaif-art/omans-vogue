@@ -1,6 +1,6 @@
 import React from 'react';
 import { X, ShoppingBag, Send, AlertTriangle, Check } from 'lucide-react';
-import { getAssetUrl } from '../lib/api';
+import { getAssetUrl, getWebPAssetUrl } from '../lib/api';
 
 const ProductModal = ({ product, onClose, onAddToCart, isInCart }) => {
   if (!product) return null;
@@ -8,6 +8,8 @@ const ProductModal = ({ product, onClose, onAddToCart, isInCart }) => {
   const WHATSAPP_NUMBER = '+233591259991';
 
   const collectionLabel = product.category === 'Women' ? "Women's Collection" : "Men's Collection";
+  const productImageUrl = getAssetUrl(product.image);
+  const productWebPUrl = getWebPAssetUrl(product.image);
 
   const handleWhatsAppOrder = () => {
     const text = encodeURIComponent(
@@ -41,11 +43,15 @@ const ProductModal = ({ product, onClose, onAddToCart, isInCart }) => {
 
         {/* Column 1: Image Showcase */}
         <div className="w-full md:w-1/2 aspect-square md:aspect-auto md:h-auto min-h-[300px] relative bg-luxury-black overflow-hidden select-none">
-          <img 
-            src={getAssetUrl(product.image)} 
-            alt={product.name} 
-            className="w-full h-full object-cover object-center pointer-events-none"
-          />
+          <picture className="block w-full h-full">
+            {productWebPUrl && <source srcSet={productWebPUrl} type="image/webp" />}
+            <img
+              src={productImageUrl}
+              alt={product.name}
+              className="w-full h-full object-cover object-center pointer-events-none"
+              decoding="async"
+            />
+          </picture>
           {!product.inStock && (
             <div className="absolute inset-0 bg-luxury-black/75 flex items-center justify-center p-4">
               <span className="px-4 py-2 border border-luxury-rosegold text-luxury-rosegold text-xs uppercase tracking-widest font-black font-serif shadow-lg bg-black/95">
@@ -153,4 +159,4 @@ const ProductModal = ({ product, onClose, onAddToCart, isInCart }) => {
   );
 };
 
-export default ProductModal;
+export default React.memo(ProductModal);

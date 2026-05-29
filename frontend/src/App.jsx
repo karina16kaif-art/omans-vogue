@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from './lib/api';
 import Particles from './components/Particles';
 import Navbar from './components/Navbar';
@@ -7,11 +7,22 @@ import Catalog from './components/Catalog';
 import ProductModal from './components/ProductModal';
 import CartDrawer from './components/CartDrawer';
 import CheckoutModal from './components/CheckoutModal';
-import AdminDashboard from './components/AdminDashboard';
-import AdminLogin from './components/AdminLogin';
 import About from './components/About';
 import Contact from './components/Contact';
 import Footer from './components/Footer';
+
+const AdminDashboard = lazy(() => import('./components/AdminConsole'));
+const AdminLogin = lazy(() => import('./components/AdminLogin'));
+
+const DEFAULT_BRAND_SETTINGS = {
+  brandName: "OMAN'S VOGUE",
+  heroEyebrow: "L'ART DE LA PARFUMERIE",
+  heroHeadlinePrefix: 'WELCOME TO',
+  heroSubtitle: '“HERE ARE THE PERFECT COLLECTIONS FOR YOUR PERSONAL INNER GROWTH”',
+  heroBackgroundImage: '/images/hero_bg.png',
+  heroBackgroundWebp: '/images/hero_bg.webp',
+  whatsappNumber: '+233591259991'
+};
 
 const FALLBACK_PRODUCTS = [
   {
@@ -176,9 +187,46 @@ const FALLBACK_PRODUCTS = [
   }
 ];
 
+const getInitialProducts = () => {
+  if (window.location.pathname === '/admin') {
+    return FALLBACK_PRODUCTS;
+  }
+
+  try {
+    const cachedProducts = localStorage.getItem('omans_products_cache');
+    if (cachedProducts) {
+      const parsedProducts = JSON.parse(cachedProducts);
+      if (Array.isArray(parsedProducts) && parsedProducts.length > 0) {
+        return parsedProducts;
+      }
+    }
+  } catch (err) {
+    console.warn('Failed to load cached product collection.', err);
+  }
+
+  return FALLBACK_PRODUCTS;
+};
+
+const getInitialBrandSettings = () => {
+  try {
+    const cachedSettings = localStorage.getItem('omans_brand_settings_cache');
+    if (cachedSettings) {
+      const parsedSettings = JSON.parse(cachedSettings);
+      if (parsedSettings && typeof parsedSettings === 'object') {
+        return { ...DEFAULT_BRAND_SETTINGS, ...parsedSettings };
+      }
+    }
+  } catch (err) {
+    console.warn('Failed to load cached brand settings.', err);
+  }
+
+  return DEFAULT_BRAND_SETTINGS;
+};
+
 const App = () => {
   // Global States
-  const [products, setProducts] = useState(FALLBACK_PRODUCTS);
+  const [products, setProducts] = useState(getInitialProducts);
+  const [brandSettings, setBrandSettings] = useState(getInitialBrandSettings);
   const [cart, setCart] = useState([]);
   const [activeSection, setActiveSection] = useState('home');
   const [selectedProduct, setSelectedProduct] = useState(null);
@@ -194,8 +242,9 @@ const App = () => {
   const isAdminRoute = routePath === '/admin';
 
   // Lagging mouse cursor glow coordinates
-  const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
-  const [trailPos, setTrailPos] = useState({ x: 0, y: 0 });
+  const cursorGlowRef = useRef(null);
+  const mousePosRef = useRef({ x: 0, y: 0 });
+  const trailPosRef = useRef({ x: 0, y: 0 });
 
   useEffect(() => {
     const syncRoute = () => setRoutePath(window.location.pathname);
@@ -203,25 +252,57 @@ const App = () => {
     return () => window.removeEventListener('popstate', syncRoute);
   }, []);
 
-  const navigateToStorefront = () => {
+  const navigateToStorefront = useCallback(() => {
     window.history.replaceState({}, '', '/');
     setRoutePath('/');
-  };
+  }, []);
+
+  const authHeaders = useMemo(
+    () => adminToken ? { Authorization: `Bearer ${adminToken}` } : {},
+    [adminToken]
+  );
+
+  const fetchProducts = useCallback(async () => {
+    try {
+      const endpoint = isAdminRoute ? `/api/products?fresh=1&_=${Date.now()}` : '/api/products';
+      const response = await api.get(endpoint, {
+        headers: isAdminRoute && adminToken ? authHeaders : undefined
+      });
+
+      if (Array.isArray(response.data)) {
+        if (response.data.length > 0 || isAdminRoute) {
+          setProducts(response.data);
+        }
+        if (!isAdminRoute && response.data.length > 0) {
+          localStorage.setItem('omans_products_cache', JSON.stringify(response.data));
+        }
+      }
+    } catch (err) {
+      console.warn('Backend product fetch failed:', err.response?.data || err.message, err);
+    }
+  }, [adminToken, authHeaders, isAdminRoute]);
 
   // Initialize and load products from REST API
   useEffect(() => {
-    const fetchProducts = async () => {
-      try {
-        const response = await api.get('/api/products');
-        if (response.data && response.data.length > 0) {
-          setProducts(response.data);
-        }
-      } catch (err) {
-        console.warn('Backend server is down, running on static fallback list.', err);
-      }
-    };
     fetchProducts();
+  }, [fetchProducts]);
+
+  const fetchBrandSettings = useCallback(async () => {
+    try {
+      const response = await api.get(`/api/settings?_=${Date.now()}`);
+      if (response.data && typeof response.data === 'object') {
+        const nextSettings = { ...DEFAULT_BRAND_SETTINGS, ...response.data };
+        setBrandSettings(nextSettings);
+        localStorage.setItem('omans_brand_settings_cache', JSON.stringify(nextSettings));
+      }
+    } catch (err) {
+      console.warn('Brand settings fetch failed:', err.response?.data || err.message, err);
+    }
   }, []);
+
+  useEffect(() => {
+    fetchBrandSettings();
+  }, [fetchBrandSettings]);
 
   // Sync Cart to/from local storage
   useEffect(() => {
@@ -248,9 +329,7 @@ const App = () => {
 
       setAdminChecking(true);
       try {
-        const response = await api.get('/api/auth/verify', {
-          headers: { Authorization: `Bearer ${adminToken}` }
-        });
+        const response = await api.get('/api/auth/verify', { headers: authHeaders });
         setAdminVerified(Boolean(response.data?.valid));
       } catch (err) {
         console.warn('Stored admin session is invalid or expired.', err);
@@ -263,17 +342,19 @@ const App = () => {
     };
 
     verifyAdmin();
-  }, [adminToken, isAdminRoute]);
+  }, [adminToken, authHeaders, isAdminRoute]);
 
-  const saveCart = (updatedCart) => {
+  const saveCart = useCallback((updatedCart) => {
     setCart(updatedCart);
     localStorage.setItem('concierge_cart', JSON.stringify(updatedCart));
-  };
+  }, []);
 
   // Custom Cursor Glow Position tracking
   useEffect(() => {
+    if (!window.matchMedia('(pointer: fine)').matches) return undefined;
+
     const handleMouseMove = (e) => {
-      setMousePos({ x: e.clientX, y: e.clientY });
+      mousePosRef.current = { x: e.clientX, y: e.clientY };
     };
     window.addEventListener('mousemove', handleMouseMove);
     return () => window.removeEventListener('mousemove', handleMouseMove);
@@ -281,116 +362,144 @@ const App = () => {
 
   // Lag ease coordinate updater
   useEffect(() => {
+    if (!window.matchMedia('(pointer: fine)').matches) return undefined;
+
     let animationFrameId;
     const easeCursor = () => {
-      setTrailPos(prev => {
-        const dx = mousePos.x - prev.x;
-        const dy = mousePos.y - prev.y;
-        return {
-          x: prev.x + dx * 0.1,
-          y: prev.y + dy * 0.1
-        };
-      });
+      const trailPos = trailPosRef.current;
+      const mousePos = mousePosRef.current;
+      const dx = mousePos.x - trailPos.x;
+      const dy = mousePos.y - trailPos.y;
+      const nextTrailPos = {
+        x: trailPos.x + dx * 0.1,
+        y: trailPos.y + dy * 0.1
+      };
+
+      trailPosRef.current = nextTrailPos;
+      if (cursorGlowRef.current) {
+        cursorGlowRef.current.style.transform = `translate3d(${nextTrailPos.x}px, ${nextTrailPos.y}px, 0) translate(-50%, -50%)`;
+      }
+
       animationFrameId = requestAnimationFrame(easeCursor);
     };
     easeCursor();
     return () => cancelAnimationFrame(animationFrameId);
-  }, [mousePos]);
+  }, []);
 
   // Luxury startup loading window
   useEffect(() => {
     const delay = setTimeout(() => {
       setLoading(false);
-    }, 2500);
+    }, 900);
     return () => clearTimeout(delay);
   }, []);
 
   // Cart operations
-  const handleAddToCart = (product) => {
-    const existingIndex = cart.findIndex(item => item.id === product.id && item.category === product.category);
-    if (existingIndex > -1) {
-      const updated = [...cart];
-      updated[existingIndex].quantity += 1;
-      saveCart(updated);
-    } else {
-      saveCart([...cart, { ...product, quantity: 1 }]);
-    }
-  };
+  const handleAddToCart = useCallback((product) => {
+    setCart(prevCart => {
+      const existingIndex = prevCart.findIndex(item => item.id === product.id && item.category === product.category);
+      const updatedCart = existingIndex > -1
+        ? prevCart.map((item, index) => index === existingIndex ? { ...item, quantity: item.quantity + 1 } : item)
+        : [...prevCart, { ...product, quantity: 1 }];
+      localStorage.setItem('concierge_cart', JSON.stringify(updatedCart));
+      return updatedCart;
+    });
+  }, []);
 
-  const handleUpdateQuantity = (productId, newQuantity) => {
-    if (newQuantity <= 0) {
-      handleRemoveItem(productId);
-      return;
-    }
-    const updated = cart.map(item => item.id === productId ? { ...item, quantity: newQuantity } : item);
-    saveCart(updated);
-  };
+  const handleRemoveItem = useCallback((productId) => {
+    setCart(prevCart => {
+      const updated = prevCart.filter(item => item.id !== productId);
+      localStorage.setItem('concierge_cart', JSON.stringify(updated));
+      return updated;
+    });
+  }, []);
 
-  const handleRemoveItem = (productId) => {
-    const updated = cart.filter(item => item.id !== productId);
-    saveCart(updated);
-  };
+  const handleUpdateQuantity = useCallback((productId, newQuantity) => {
+    setCart(prevCart => {
+      const updated = newQuantity <= 0
+        ? prevCart.filter(item => item.id !== productId)
+        : prevCart.map(item => item.id === productId ? { ...item, quantity: newQuantity } : item);
+      localStorage.setItem('concierge_cart', JSON.stringify(updated));
+      return updated;
+    });
+  }, []);
 
-  const handleClearCart = () => {
+  const handleClearCart = useCallback(() => {
     saveCart([]);
     setIsCheckoutOpen(false);
     setIsCartOpen(false);
-  };
+  }, [saveCart]);
 
   // Admin database callback triggers
-  const handleProductAdded = (newProd) => {
+  const handleProductAdded = useCallback((newProd) => {
     setProducts(prev => [...prev, newProd]);
-  };
+  }, []);
 
-  const handleProductUpdated = (updatedProd) => {
+  const handleProductUpdated = useCallback((updatedProd) => {
     setProducts(prev => prev.map(p => p.id === updatedProd.id ? updatedProd : p));
     if (selectedProduct && selectedProduct.id === updatedProd.id) {
       setSelectedProduct(updatedProd);
     }
-  };
+  }, [selectedProduct]);
 
-  const handleProductDeleted = (id) => {
+  const handleProductDeleted = useCallback((id) => {
     setProducts(prev => prev.filter(p => p.id !== id));
     if (selectedProduct && selectedProduct.id === id) {
       setSelectedProduct(null);
     }
-  };
+  }, [selectedProduct]);
 
-  const handleAdminLogin = (token) => {
+  const handleAdminLogin = useCallback((token) => {
     localStorage.setItem('omans_admin_token', token);
     setAdminToken(token);
     setAdminVerified(true);
-  };
+  }, []);
 
-  const handleAdminLogout = () => {
+  const handleAdminLogout = useCallback(() => {
     localStorage.removeItem('omans_admin_token');
     setAdminToken('');
     setAdminVerified(false);
     navigateToStorefront();
-  };
+  }, []);
+
+  const handleBrandSettingsUpdated = useCallback((settings) => {
+    const nextSettings = { ...DEFAULT_BRAND_SETTINGS, ...(settings || {}) };
+    setBrandSettings(nextSettings);
+    localStorage.setItem('omans_brand_settings_cache', JSON.stringify(nextSettings));
+  }, []);
 
   // Scrolls to Catalog
-  const handleExploreScroll = () => {
+  const handleExploreScroll = useCallback(() => {
     const catalog = document.getElementById('catalog');
     if (catalog) {
       catalog.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
-  };
+  }, []);
 
   // Floating immediate WhatsApp orders button (fixed back-to-top style helper)
-  const handleWhatsAppConsultation = () => {
+  const handleWhatsAppConsultation = useCallback(() => {
     const text = encodeURIComponent(
-      "Hello Oman's Vogue! I am seeking a live consultation with a fragrance expert."
+      `Hello ${brandSettings.brandName}! I am seeking a live consultation with a fragrance expert.`
     );
-    window.open(`https://wa.me/+233591259991?text=${text}`, '_blank');
-  };
+    window.open(`https://wa.me/${brandSettings.whatsappNumber}?text=${text}`, '_blank');
+  }, [brandSettings.brandName, brandSettings.whatsappNumber]);
+
+  const cartCount = useMemo(
+    () => cart.reduce((acc, item) => acc + item.quantity, 0),
+    [cart]
+  );
+
+  const selectedProductInCart = useMemo(
+    () => selectedProduct ? cart.some(item => item.id === selectedProduct.id && item.category === selectedProduct.category) : false,
+    [cart, selectedProduct]
+  );
 
   if (isAdminRoute) {
     return (
       <>
         <div
+          ref={cursorGlowRef}
           className="cursor-glow hidden lg:block"
-          style={{ left: `${trailPos.x}px`, top: `${trailPos.y}px` }}
         />
         <div className="min-h-screen bg-luxury-black text-luxury-champagne selection:bg-luxury-rosegold/30 selection:text-white">
           <Particles />
@@ -405,20 +514,34 @@ const App = () => {
                 </div>
               </div>
             </div>
-          ) : adminVerified && adminToken ? (
-            <AdminDashboard
-              products={products}
-              token={adminToken}
-              onLogout={handleAdminLogout}
-              onProductAdded={handleProductAdded}
-              onProductUpdated={handleProductUpdated}
-              onProductDeleted={handleProductDeleted}
-            />
           ) : (
-            <AdminLogin
-              onLoginSuccess={handleAdminLogin}
-              onCancel={navigateToStorefront}
-            />
+            <Suspense fallback={
+              <div className="relative z-10 min-h-screen flex items-center justify-center">
+                <span className="text-[10px] tracking-[0.45em] uppercase font-bold text-luxury-rosegold">
+                  Preparing Atelier Console
+                </span>
+              </div>
+            }>
+              {adminVerified && adminToken ? (
+                <AdminDashboard
+                  products={products}
+                  token={adminToken}
+                  onLogout={handleAdminLogout}
+                  onProductAdded={handleProductAdded}
+                  onProductUpdated={handleProductUpdated}
+                  onProductDeleted={handleProductDeleted}
+                  onProductsRefresh={fetchProducts}
+                  brandSettings={brandSettings}
+                  onBrandSettingsUpdated={handleBrandSettingsUpdated}
+                  onBrandSettingsRefresh={fetchBrandSettings}
+                />
+              ) : (
+                <AdminLogin
+                  onLoginSuccess={handleAdminLogin}
+                  onCancel={navigateToStorefront}
+                />
+              )}
+            </Suspense>
           )}
         </div>
       </>
@@ -429,8 +552,8 @@ const App = () => {
     <>
       {/* 1. SECURE LAGGING CURSOR GLOW */}
       <div 
+        ref={cursorGlowRef}
         className="cursor-glow hidden lg:block" 
-        style={{ left: `${trailPos.x}px`, top: `${trailPos.y}px` }} 
       />
 
       {/* 2. DYNAMIC LUXURY LOADING SCREEN */}
@@ -439,7 +562,7 @@ const App = () => {
           <div className="text-center space-y-2 animate-pulse">
             <span className="text-[10px] tracking-[0.6em] uppercase font-bold text-luxury-rosegold block mb-1">ATELIER</span>
             <h1 className="font-serif text-3xl sm:text-5xl tracking-[0.25em] text-white uppercase font-black">
-              OMAN'S VOGUE
+              {brandSettings.brandName}
             </h1>
           </div>
           {/* Shimmer loading spinner */}
@@ -463,12 +586,13 @@ const App = () => {
           <Navbar 
             activeSection={activeSection} 
             setActiveSection={setActiveSection} 
-            cartCount={cart.reduce((acc, item) => acc + item.quantity, 0)}
+            cartCount={cartCount}
             onOpenCart={() => setIsCartOpen(true)}
+            brandSettings={brandSettings}
           />
 
           {/* 5. HERO PANEL */}
-          <Hero onExploreClick={handleExploreScroll} />
+          <Hero onExploreClick={handleExploreScroll} brandSettings={brandSettings} />
 
           {/* 6. MAIN CONTENT ROUTINGS */}
           <main className="flex-grow">
@@ -486,12 +610,12 @@ const App = () => {
             <About />
 
             {/* Contact Concierge Portal */}
-            <Contact />
+            <Contact brandSettings={brandSettings} />
 
           </main>
 
           {/* 7. FOOTER concierges */}
-          <Footer setActiveSection={setActiveSection} />
+          <Footer setActiveSection={setActiveSection} brandSettings={brandSettings} />
 
           {/* 8. IMMERSIVE PRODUCT DETAILS POP-UP MODAL */}
           {selectedProduct && (
@@ -499,7 +623,7 @@ const App = () => {
               product={selectedProduct}
               onClose={() => setSelectedProduct(null)}
               onAddToCart={handleAddToCart}
-              isInCart={cart.some(item => item.id === selectedProduct.id && item.category === selectedProduct.category)}
+              isInCart={selectedProductInCart}
             />
           )}
 
@@ -522,6 +646,7 @@ const App = () => {
             onClose={() => setIsCheckoutOpen(false)}
             cartItems={cart}
             onClearCart={handleClearCart}
+            brandSettings={brandSettings}
           />
 
           {/* 11. FLOATING WHATSAPP ASSISTANT BUTTON */}

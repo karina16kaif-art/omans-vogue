@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Send, Eye, Sparkles, AlertCircle } from 'lucide-react';
-import { getAssetUrl } from '../lib/api';
+import { getAssetUrl, getWebPAssetUrl } from '../lib/api';
 
-const ProductCard = ({ product, onSelect }) => {
+const ProductCard = React.memo(({ product, onSelect }) => {
   const [tiltStyle, setTiltStyle] = useState({});
 
   const handleMouseMove = (e) => {
@@ -29,6 +29,8 @@ const ProductCard = ({ product, onSelect }) => {
   };
 
   const collectionLabel = product.category === 'Women' ? "Women's Collection" : "Men's Collection";
+  const productImageUrl = getAssetUrl(product.image);
+  const productWebPUrl = getWebPAssetUrl(product.image);
 
   const handleWhatsAppOrder = (e) => {
     e.stopPropagation();
@@ -65,12 +67,17 @@ const ProductCard = ({ product, onSelect }) => {
 
         {/* Perfume Image Wrap */}
         <div className="relative aspect-[1/1] overflow-hidden bg-luxury-black">
-          <img 
-            src={getAssetUrl(product.image)} 
-            alt={product.name} 
-            className="w-full h-full object-cover object-center group-hover:scale-105 transition-transform duration-700 select-none pointer-events-none"
-            loading="lazy"
-          />
+          <picture className="block w-full h-full">
+            {productWebPUrl && <source srcSet={productWebPUrl} type="image/webp" />}
+            <img
+              src={productImageUrl}
+              alt={product.name}
+              className="w-full h-full object-cover object-center group-hover:scale-105 transition-transform duration-700 select-none pointer-events-none"
+              loading="lazy"
+              decoding="async"
+              sizes="(min-width: 1024px) 25vw, (min-width: 640px) 50vw, 100vw"
+            />
+          </picture>
           {/* Sparkle decorative effect */}
           {product.inStock && (
             <div className="absolute top-3 right-3 p-1.5 rounded-full bg-luxury-charcoal/80 backdrop-blur-xs border border-luxury-rosegold/20 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -130,16 +137,16 @@ const ProductCard = ({ product, onSelect }) => {
       </div>
     </div>
   );
-};
+});
 
 const Catalog = ({ products, onSelectProduct, onAddToCart, activeSection, setActiveSection }) => {
   const [filter, setFilter] = useState('All'); // 'All', 'Women', 'Men'
 
   // Apply filters
-  const filteredProducts = products.filter(p => {
+  const filteredProducts = useMemo(() => products.filter(p => {
     if (filter === 'All') return true;
     return p.category.toLowerCase() === filter.toLowerCase();
-  });
+  }), [filter, products]);
 
   return (
     <section id="catalog" className="relative max-w-7xl mx-auto px-6 md:px-12 py-24 z-10 border-t border-luxury-rosegold/5">
@@ -196,4 +203,4 @@ const Catalog = ({ products, onSelectProduct, onAddToCart, activeSection, setAct
   );
 };
 
-export default Catalog;
+export default React.memo(Catalog);

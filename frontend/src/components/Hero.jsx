@@ -1,14 +1,26 @@
 import React from 'react';
 import { Send, ArrowDown } from 'lucide-react';
+import { getAssetUrl, getWebPAssetUrl } from '../lib/api';
 
-const Hero = ({ onExploreClick }) => {
-  const WHATSAPP_NUMBER = '+233591259991';
+const DEFAULT_SETTINGS = {
+  brandName: "OMAN'S VOGUE",
+  heroEyebrow: "L'ART DE LA PARFUMERIE",
+  heroHeadlinePrefix: 'WELCOME TO',
+  heroSubtitle: '“HERE ARE THE PERFECT COLLECTIONS FOR YOUR PERSONAL INNER GROWTH”',
+  heroBackgroundImage: '/images/hero_bg.png',
+  heroBackgroundWebp: '/images/hero_bg.webp',
+  whatsappNumber: '+233591259991'
+};
+
+const Hero = ({ onExploreClick, brandSettings }) => {
+  const settings = { ...DEFAULT_SETTINGS, ...(brandSettings || {}) };
+  const heroWebP = settings.heroBackgroundWebp || getWebPAssetUrl(settings.heroBackgroundImage);
   
   const handleWhatsAppChat = () => {
     const text = encodeURIComponent(
-      "Hello Oman's Vogue! I am visiting your virtual luxury store and would like to seek fragrance recommendations for my personal inner growth. Please guide me through your collections!"
+      `Hello ${settings.brandName}! I am visiting your virtual luxury store and would like to seek fragrance recommendations for my personal inner growth. Please guide me through your collections!`
     );
-    window.open(`https://wa.me/${WHATSAPP_NUMBER}?text=${text}`, '_blank');
+    window.open(`https://wa.me/${settings.whatsappNumber}?text=${text}`, '_blank');
   };
 
   return (
@@ -18,11 +30,16 @@ const Hero = ({ onExploreClick }) => {
       <div className="absolute inset-0 z-0 select-none pointer-events-none">
         <div className="absolute inset-0 bg-gradient-to-t from-luxury-black via-luxury-black/40 to-transparent z-10" />
         <div className="absolute inset-0 bg-gradient-to-r from-luxury-black via-transparent to-luxury-black/30 z-10" />
-        <img 
-          src="/images/hero_bg.png" 
-          alt="Cinematic Perfume Spray" 
-          className="w-full h-full object-cover object-center scale-105 hero-pan-zoom"
-        />
+        <picture className="block w-full h-full">
+          {heroWebP && <source srcSet={getAssetUrl(heroWebP)} type="image/webp" />}
+          <img
+            src={getAssetUrl(settings.heroBackgroundImage)}
+            alt="Cinematic Perfume Spray"
+            className="w-full h-full object-cover object-center scale-105 hero-pan-zoom"
+            decoding="async"
+            fetchPriority="high"
+          />
+        </picture>
       </div>
 
       {/* Floating Sparkles and Orbs Overlay */}
@@ -37,22 +54,22 @@ const Hero = ({ onExploreClick }) => {
         {/* Subtle Luxury Subtitle */}
         <div className="mb-4 md:mb-6 overflow-hidden">
           <span className="inline-block text-[10px] md:text-xs tracking-[0.4em] uppercase font-bold text-luxury-rosegold text-reveal">
-            L'ART DE LA PARFUMERIE
+            {settings.heroEyebrow}
           </span>
         </div>
 
         {/* Major Editorial Headline */}
         <h1 className="font-serif text-4xl sm:text-6xl md:text-8xl tracking-widest uppercase mb-6 leading-tight select-none">
-          <span className="block text-white opacity-95">WELCOME TO</span>
+          <span className="block text-white opacity-95">{settings.heroHeadlinePrefix}</span>
           <span className="block text-gold-gradient font-black mt-2 filter drop-shadow-[0_2px_15px_rgba(212,175,55,0.2)]">
-            OMAN'S VOGUE
+            {settings.brandName}
           </span>
         </h1>
 
         {/* Emotionally Charged Philosophy Text */}
         <div className="max-w-2xl mb-10 overflow-hidden">
           <p className="font-sans text-sm sm:text-base md:text-lg text-luxury-champagne/80 font-light tracking-wide leading-relaxed text-reveal" style={{ animationDelay: '0.4s' }}>
-            “HERE ARE THE PERFECT COLLECTIONS FOR YOUR PERSONAL INNER GROWTH”
+            {settings.heroSubtitle}
           </p>
         </div>
 
