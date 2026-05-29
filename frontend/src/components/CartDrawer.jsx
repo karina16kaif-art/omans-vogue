@@ -16,12 +16,12 @@ const CartDrawer = ({ isOpen, onClose, cartItems, onUpdateQuantity, onRemoveItem
         className="absolute inset-0 bg-black/75 backdrop-blur-xs transition-opacity duration-300"
       />
 
-      <div className="absolute inset-y-0 right-0 max-w-full flex pl-10">
+      <div className="absolute inset-y-0 right-0 max-w-full flex pl-0 sm:pl-10">
         {/* Sliding Panel */}
         <div className="w-screen max-w-md glass-panel border-l border-luxury-rosegold/15 flex flex-col justify-between h-full shadow-2xl transform transition-transform duration-500 ease-out">
           
           {/* Header */}
-          <div className="p-6 border-b border-luxury-rosegold/10 flex items-center justify-between">
+          <div className="p-5 sm:p-6 border-b border-luxury-rosegold/10 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <span className="font-serif tracking-widest text-lg font-bold text-white uppercase">Your Atelier</span>
               <span className="text-[10px] bg-luxury-rosegold/20 text-luxury-rosegold font-bold uppercase tracking-wider px-2 py-0.5 border border-luxury-rosegold/10">
@@ -37,7 +37,7 @@ const CartDrawer = ({ isOpen, onClose, cartItems, onUpdateQuantity, onRemoveItem
           </div>
 
           {/* Cart Contents list */}
-          <div className="flex-grow overflow-y-auto p-6 space-y-6">
+          <div className="flex-grow overflow-y-auto p-5 sm:p-6 space-y-5 sm:space-y-6">
             {cartItems.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-center space-y-4">
                 <div className="w-16 h-16 rounded-full bg-luxury-charcoal flex items-center justify-center border border-luxury-rosegold/10 text-luxury-rosegold/50">
@@ -127,7 +127,7 @@ const CartDrawer = ({ isOpen, onClose, cartItems, onUpdateQuantity, onRemoveItem
 
           {/* Drawer Footer Actions */}
           {cartItems.length > 0 && (
-            <div className="p-6 border-t border-luxury-rosegold/15 bg-luxury-black/90 space-y-6">
+            <div className="p-5 sm:p-6 border-t border-luxury-rosegold/15 bg-luxury-black/90 space-y-5 sm:space-y-6">
               {/* Summary totals */}
               <div className="space-y-2">
                 <div className="flex justify-between text-xs text-luxury-champagne/60 uppercase tracking-widest font-light">

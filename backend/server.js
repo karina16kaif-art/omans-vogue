@@ -8,6 +8,13 @@ const multer = require('multer');
 const jwt = require('jsonwebtoken');
 const sharp = require('sharp');
 const crypto = require('crypto');
+let nodemailer = null;
+
+try {
+  nodemailer = require('nodemailer');
+} catch (error) {
+  nodemailer = null;
+}
 
 const app = express();
 const PORT = process.env.PORT || 5001;
@@ -23,6 +30,11 @@ const HUBTEL_MERCHANT_ACCOUNT = process.env.HUBTEL_MERCHANT_ACCOUNT || '';
 const HUBTEL_CALLBACK_URL = process.env.HUBTEL_CALLBACK_URL || '';
 const HUBTEL_RETURN_URL = process.env.HUBTEL_RETURN_URL || CLIENT_ORIGIN;
 const HUBTEL_API_BASE_URL = (process.env.HUBTEL_API_BASE_URL || 'https://api.hubtel.com/v1').replace(/\/+$/, '');
+const ADMIN_NOTIFICATION_EMAIL = process.env.ADMIN_NOTIFICATION_EMAIL || '';
+const GMAIL_USER = process.env.GMAIL_USER || '';
+const GMAIL_APP_PASSWORD = process.env.GMAIL_APP_PASSWORD || '';
+const ADMIN_WHATSAPP_NUMBER = process.env.ADMIN_WHATSAPP_NUMBER || '';
+const WHATSAPP_ALERT_WEBHOOK_URL = process.env.WHATSAPP_ALERT_WEBHOOK_URL || '';
 const ALLOWED_ORIGINS = (process.env.CORS_ORIGINS || [
   CLIENT_ORIGIN,
   'http://localhost:5173',
@@ -235,7 +247,9 @@ const normalizeStoredImage = (image, fallbackImage) => {
   }
   return normalized;
 };
-const ORDER_STATUSES = ['New', 'Processing', 'Out for Delivery', 'Delivered', 'Cancelled'];
+const ORDER_STATUSES = ['Pending', 'Processing', 'Delivered', 'Cancelled'];
+const LEGACY_ORDER_STATUSES = ['New', 'Out for Delivery'];
+const ACCEPTED_ORDER_STATUSES = [...ORDER_STATUSES, ...LEGACY_ORDER_STATUSES];
 const PAYMENT_STATUSES = ['Pending', 'Paid', 'Failed', 'Cancelled'];
 const normalizeOrderInput = (value) => typeof value === 'string' ? value.trim() : value;
 
@@ -338,6 +352,76 @@ const normalizeOrderPayload = (body) => {
   };
 };
 
+const formatCurrency = (value) => `GHS ${Number(value || 0).toFixed(2)}`;
+
+const buildOrderNotificationText = (order) => {
+  const items = Array.isArray(order.items) ? order.items : [];
+  const lines = [
+    `New OMAN'S VOGUE order: ${order.id}`,
+    `Customer: ${order.customerName}`,
+    `Phone: ${order.customerPhone}`,
+    `Delivery phone: ${order.deliveryPhone}`,
+    `Address: ${order.deliveryAddress}, ${order.cityRegion}`,
+    `Total: ${formatCurrency(order.totalAmount)}`,
+    `Payment: ${order.paymentMethod} (${order.paymentStatus})`,
+    `Status: ${order.orderStatus}`,
+    'Items:',
+    ...items.map(item => `- ${item.quantity}x ${item.name} (${item.category}) @ ${formatCurrency(item.unitPrice)}`)
+  ];
+  return lines.join('\n');
+};
+
+const sendGmailOrderNotification = async (order) => {
+  if (!nodemailer || !GMAIL_USER || !GMAIL_APP_PASSWORD || !ADMIN_NOTIFICATION_EMAIL) {
+    return;
+  }
+
+  const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+      user: GMAIL_USER,
+      pass: GMAIL_APP_PASSWORD
+    }
+  });
+
+  await transporter.sendMail({
+    from: `"OMAN'S VOGUE Orders" <${GMAIL_USER}>`,
+    to: ADMIN_NOTIFICATION_EMAIL,
+    subject: `New OMAN'S VOGUE Order ${order.id}`,
+    text: buildOrderNotificationText(order)
+  });
+};
+
+const sendWhatsAppOrderNotification = async (order) => {
+  if (!WHATSAPP_ALERT_WEBHOOK_URL) {
+    return;
+  }
+
+  await fetch(WHATSAPP_ALERT_WEBHOOK_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      to: ADMIN_WHATSAPP_NUMBER,
+      orderId: order.id,
+      message: buildOrderNotificationText(order),
+      order
+    })
+  });
+};
+
+const notifyAdminNewOrder = (order) => {
+  Promise.allSettled([
+    sendGmailOrderNotification(order),
+    sendWhatsAppOrderNotification(order)
+  ]).then((results) => {
+    results.forEach((result) => {
+      if (result.status === 'rejected') {
+        console.warn('[Oman’s Vogue Server] Order notification failed:', result.reason?.message || result.reason);
+      }
+    });
+  });
+};
+
 const buildOrderAnalytics = (orders, products) => {
   const now = new Date();
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -365,7 +449,13 @@ const buildOrderAnalytics = (orders, products) => {
       }
     }
 
-    const orderStatus = ORDER_STATUSES.includes(order.orderStatus) ? order.orderStatus : 'New';
+    const orderStatus = order.orderStatus === 'New'
+      ? 'Pending'
+      : order.orderStatus === 'Out for Delivery'
+        ? 'Processing'
+        : ORDER_STATUSES.includes(order.orderStatus)
+          ? order.orderStatus
+          : 'Pending';
     ordersByStatus[orderStatus] = (ordersByStatus[orderStatus] || 0) + 1;
 
     const items = Array.isArray(order.items) ? order.items : [];
@@ -397,6 +487,7 @@ const buildOrderAnalytics = (orders, products) => {
   const paidToday = ordersToday.filter(order => order.paymentStatus === 'Paid');
   const paidThisMonth = ordersThisMonth.filter(order => order.paymentStatus === 'Paid');
   const bestSellingPerfume = [...productSales.values()].sort((a, b) => b.quantity - a.quantity)[0] || null;
+  const bestSellingProducts = [...productSales.values()].sort((a, b) => b.quantity - a.quantity).slice(0, 5);
 
   return {
     totalOrders: orders.length,
@@ -405,11 +496,12 @@ const buildOrderAnalytics = (orders, products) => {
     totalRevenue: revenue(paidOrders),
     revenueToday: revenue(paidToday),
     revenueThisMonth: revenue(paidThisMonth),
-    pendingOrders: orders.filter(order => order.paymentStatus === 'Pending').length,
+    pendingOrders: orders.filter(order => order.paymentStatus === 'Pending' || order.orderStatus === 'Pending' || order.orderStatus === 'New').length,
     paidOrders: paidOrders.length,
     deliveredOrders: orders.filter(order => order.orderStatus === 'Delivered').length,
     cancelledOrders: orders.filter(order => order.orderStatus === 'Cancelled').length,
     bestSellingPerfume,
+    bestSellingProducts,
     lowStockCount: products.filter(product => product.inStock === false).length,
     monthlySales: monthlyRevenue,
     ordersByStatus,
@@ -706,7 +798,7 @@ app.post('/api/orders', (req, res) => {
     totalAmount: normalized.totalAmount,
     paymentMethod: normalized.paymentMethod,
     paymentStatus: 'Pending',
-    orderStatus: 'New',
+    orderStatus: 'Pending',
     createdAt: now,
     updatedAt: now,
     hubtel: null
@@ -718,6 +810,8 @@ app.post('/api/orders', (req, res) => {
   if (!saveOrders(orders)) {
     return res.status(500).json({ error: 'Failed to save order' });
   }
+
+  notifyAdminNewOrder(order);
 
   return res.status(201).json({
     order,
@@ -744,7 +838,15 @@ app.get('/api/orders', authenticateAdmin, (req, res) => {
     orders = orders.filter(order => order.paymentStatus === paymentStatus);
   }
   if (orderStatus && orderStatus !== 'All') {
-    orders = orders.filter(order => order.orderStatus === orderStatus);
+    orders = orders.filter(order => {
+      if (orderStatus === 'Pending') {
+        return order.orderStatus === 'Pending' || order.orderStatus === 'New';
+      }
+      if (orderStatus === 'Processing') {
+        return order.orderStatus === 'Processing' || order.orderStatus === 'Out for Delivery';
+      }
+      return order.orderStatus === orderStatus;
+    });
   }
 
   res.set('Cache-Control', 'no-store');
@@ -760,7 +862,7 @@ app.get(['/api/orders/analytics', '/api/analytics'], authenticateAdmin, (req, re
 // API: Admin update delivery/order status
 app.patch('/api/orders/:id/status', authenticateAdmin, (req, res) => {
   const nextStatus = normalizeOrderInput(req.body?.orderStatus);
-  if (!ORDER_STATUSES.includes(nextStatus)) {
+  if (!ACCEPTED_ORDER_STATUSES.includes(nextStatus)) {
     return res.status(400).json({ error: 'Invalid order status' });
   }
 

@@ -4,7 +4,7 @@ import { api } from '../lib/api';
 import AdminProducts from './AdminProducts';
 import BrandSettings from './BrandSettings';
 
-const ORDER_STATUSES = ['New', 'Processing', 'Out for Delivery', 'Delivered', 'Cancelled'];
+const ORDER_STATUSES = ['Pending', 'Processing', 'Delivered', 'Cancelled'];
 const PAYMENT_STATUSES = ['All', 'Pending', 'Paid', 'Failed', 'Cancelled'];
 const EMPTY_ANALYTICS = {
   totalOrders: 0,
@@ -18,6 +18,7 @@ const EMPTY_ANALYTICS = {
   deliveredOrders: 0,
   cancelledOrders: 0,
   bestSellingPerfume: null,
+  bestSellingProducts: [],
   lowStockCount: 0,
   monthlySales: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'].map(month => ({ month, revenue: 0, orders: 0 })),
   ordersByStatus: ORDER_STATUSES.reduce((acc, status) => ({ ...acc, [status]: 0 }), {}),
@@ -195,7 +196,7 @@ const AdminConsole = (props) => {
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div className="lg:col-span-2 p-6 glass-panel">
-              <h3 className="text-[10px] uppercase tracking-widest text-luxury-rosegold font-bold mb-5">Monthly Sales</h3>
+              <h3 className="text-[10px] uppercase tracking-widest text-luxury-rosegold font-bold mb-5">Revenue & Monthly Sales</h3>
               <div className="h-52 flex items-end gap-2">
                 {(analytics?.monthlySales || []).map((month) => (
                   <div key={month.month} className="flex-1 h-full flex flex-col justify-end gap-2">
@@ -244,6 +245,53 @@ const AdminConsole = (props) => {
                     </div>
                   );
                 })}
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="p-6 glass-panel">
+              <h3 className="text-[10px] uppercase tracking-widest text-luxury-rosegold font-bold mb-5">Orders</h3>
+              <div className="h-44 flex items-end gap-2">
+                {(analytics?.monthlySales || []).map((month) => {
+                  const maxOrders = Math.max(...(analytics?.monthlySales || []).map(item => Number(item.orders || 0)), 1);
+                  return (
+                    <div key={`orders-${month.month}`} className="flex-1 h-full flex flex-col justify-end gap-2">
+                      <div
+                        className="bg-luxury-gold/80 border border-luxury-gold/20 min-h-[4px]"
+                        style={{ height: `${Math.max(4, (Number(month.orders || 0) / maxOrders) * 100)}%` }}
+                        title={`${month.month}: ${month.orders} orders`}
+                      />
+                      <span className="text-[8px] text-luxury-champagne/50 text-center uppercase">{month.month}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="p-6 glass-panel">
+              <h3 className="text-[10px] uppercase tracking-widest text-luxury-rosegold font-bold mb-5">Best-Selling Products</h3>
+              <div className="space-y-3">
+                {(analytics?.bestSellingProducts || []).length > 0 ? (
+                  analytics.bestSellingProducts.map((item) => (
+                    <div key={item.name}>
+                      <div className="flex justify-between text-[9px] uppercase tracking-widest text-luxury-champagne/60 mb-1">
+                        <span>{item.name}</span>
+                        <span>{item.quantity}</span>
+                      </div>
+                      <div className="h-2 bg-luxury-black border border-white/5">
+                        <div
+                          className="h-full bg-luxury-rosegold"
+                          style={{ width: `${Math.min(100, (Number(item.quantity || 0) / Math.max(Number(analytics.bestSellingProducts[0]?.quantity || 1), 1)) * 100)}%` }}
+                        />
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="py-12 text-center text-xs uppercase tracking-widest text-luxury-champagne/50">
+                    No product sales yet.
+                  </div>
+                )}
               </div>
             </div>
           </div>

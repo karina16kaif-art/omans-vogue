@@ -2,10 +2,11 @@ import React, { useMemo, useState } from 'react';
 import { Send, Eye, Sparkles, AlertCircle } from 'lucide-react';
 import { getAssetUrl, getWebPAssetUrl } from '../lib/api';
 
-const ProductCard = React.memo(({ product, onSelect }) => {
+const ProductCard = React.memo(({ product, onSelect, brandSettings }) => {
   const [tiltStyle, setTiltStyle] = useState({});
 
   const handleMouseMove = (e) => {
+    if (window.matchMedia('(pointer: coarse)').matches) return;
     const card = e.currentTarget;
     const rect = card.getBoundingClientRect();
     const x = e.clientX - rect.left; // x coordinate inside element
@@ -35,9 +36,9 @@ const ProductCard = React.memo(({ product, onSelect }) => {
   const handleWhatsAppOrder = (e) => {
     e.stopPropagation();
     const text = encodeURIComponent(
-      `Hello Oman's Vogue! I want to order ${product.name}. Price: GHS ${Number(product.price).toFixed(2)}. Category: ${collectionLabel}. Please confirm availability and payment details.${product.inStock ? '' : ' I can see it is currently marked out of stock.'}`
+      `Hello ${brandSettings?.brandName || "Oman's Vogue"}! I want to order ${product.name}. Price: GHS ${Number(product.price).toFixed(2)}. Category: ${collectionLabel}. Please confirm availability and payment details.${product.inStock ? '' : ' I can see it is currently marked out of stock.'}`
     );
-    window.open(`https://wa.me/233591259991?text=${text}`, '_blank');
+    window.open(`https://wa.me/${(brandSettings?.whatsappNumber || '+233591259991').replace('+', '')}?text=${text}`, '_blank');
   };
 
   return (
@@ -139,7 +140,7 @@ const ProductCard = React.memo(({ product, onSelect }) => {
   );
 });
 
-const Catalog = ({ products, onSelectProduct, onAddToCart, activeSection, setActiveSection }) => {
+const Catalog = ({ products, onSelectProduct, onAddToCart, activeSection, setActiveSection, brandSettings }) => {
   const [filter, setFilter] = useState('All'); // 'All', 'Women', 'Men'
 
   // Apply filters
@@ -194,6 +195,7 @@ const Catalog = ({ products, onSelectProduct, onAddToCart, activeSection, setAct
               key={product.id} 
               product={product} 
               onSelect={onSelectProduct}
+              brandSettings={brandSettings}
             />
           ))}
         </div>

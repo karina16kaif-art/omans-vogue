@@ -10,6 +10,7 @@ import CheckoutModal from './components/CheckoutModal';
 import About from './components/About';
 import Contact from './components/Contact';
 import Footer from './components/Footer';
+import SeoMeta from './components/SeoMeta';
 
 const AdminDashboard = lazy(() => import('./components/AdminConsole'));
 const AdminLogin = lazy(() => import('./components/AdminLogin'));
@@ -497,6 +498,7 @@ const App = () => {
   if (isAdminRoute) {
     return (
       <>
+        <SeoMeta products={products} brandSettings={brandSettings} isAdminRoute={isAdminRoute} />
         <div
           ref={cursorGlowRef}
           className="cursor-glow hidden lg:block"
@@ -550,6 +552,7 @@ const App = () => {
 
   return (
     <>
+      <SeoMeta products={products} brandSettings={brandSettings} isAdminRoute={isAdminRoute} />
       {/* 1. SECURE LAGGING CURSOR GLOW */}
       <div 
         ref={cursorGlowRef}
@@ -604,6 +607,7 @@ const App = () => {
               onAddToCart={handleAddToCart}
               activeSection={activeSection}
               setActiveSection={setActiveSection}
+              brandSettings={brandSettings}
             />
 
             {/* Stories/Heritage Section */}
@@ -624,6 +628,7 @@ const App = () => {
               onClose={() => setSelectedProduct(null)}
               onAddToCart={handleAddToCart}
               isInCart={selectedProductInCart}
+              brandSettings={brandSettings}
             />
           )}
 

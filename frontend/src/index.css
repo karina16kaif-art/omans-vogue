@@ -174,3 +174,58 @@ body {
 .animate-float {
   animation: float 6s ease-in-out infinite;
 }
+
+@media (max-width: 640px) {
+  html {
+    scroll-padding-top: 72px;
+  }
+
+  .glass-panel {
+    backdrop-filter: blur(12px) saturate(130%);
+    -webkit-backdrop-filter: blur(12px) saturate(130%);
+  }
+
+  .glass-panel-heavy {
+    backdrop-filter: blur(18px) saturate(145%);
+    -webkit-backdrop-filter: blur(18px) saturate(145%);
+  }
+
+  .hero-pan-zoom {
+    animation-duration: 36s;
+  }
+
+  #catalog,
+  #about,
+  #contact {
+    padding-top: 4.5rem;
+    padding-bottom: 4.5rem;
+  }
+
+  .tilt-card {
+    transition-duration: 220ms;
+  }
+}
+
+@media (pointer: coarse) {
+  .tilt-card:hover {
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.48), 0 0 18px rgba(183, 110, 121, 0.1);
+  }
+
+  .btn-shimmer::after {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -2,10 +2,11 @@ import React from 'react';
 import { X, ShoppingBag, Send, AlertTriangle, Check } from 'lucide-react';
 import { getAssetUrl, getWebPAssetUrl } from '../lib/api';
 
-const ProductModal = ({ product, onClose, onAddToCart, isInCart }) => {
+const ProductModal = ({ product, onClose, onAddToCart, isInCart, brandSettings }) => {
   if (!product) return null;
 
-  const WHATSAPP_NUMBER = '+233591259991';
+  const WHATSAPP_NUMBER = brandSettings?.whatsappNumber || '+233591259991';
+  const brandName = brandSettings?.brandName || "Oman's Vogue";
 
   const collectionLabel = product.category === 'Women' ? "Women's Collection" : "Men's Collection";
   const productImageUrl = getAssetUrl(product.image);
@@ -13,7 +14,7 @@ const ProductModal = ({ product, onClose, onAddToCart, isInCart }) => {
 
   const handleWhatsAppOrder = () => {
     const text = encodeURIComponent(
-      `Hello Oman's Vogue! I want to order ${product.name}. Price: GHS ${Number(product.price).toFixed(2)}. Category: ${collectionLabel}. Please confirm availability and payment details.`
+      `Hello ${brandName}! I want to order ${product.name}. Price: GHS ${Number(product.price).toFixed(2)}. Category: ${collectionLabel}. Please confirm availability and payment details.`
     );
     window.open(`https://wa.me/${WHATSAPP_NUMBER.replace('+', '')}?text=${text}`, '_blank');
   };
