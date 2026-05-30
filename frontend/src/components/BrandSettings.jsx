@@ -34,6 +34,11 @@ const BrandSettings = ({ token, brandSettings, onBrandSettingsUpdated, onBrandSe
     setTimeout(() => setErrorMsg(''), 5000);
   };
 
+  const getApiErrorMessage = (error, fallback) => {
+    const data = error.response?.data;
+    return data?.message || data?.error || fallback;
+  };
+
   const handleChange = (key, value) => {
     setSettings(prev => ({ ...prev, [key]: value }));
   };
@@ -49,7 +54,7 @@ const BrandSettings = ({ token, brandSettings, onBrandSettingsUpdated, onBrandSe
       showSuccess('Brand settings saved permanently.');
     } catch (error) {
       console.error('Failed to save brand settings:', error.response?.data || error.message, error);
-      showError('Brand settings could not be saved. Refresh your admin session and try again.');
+      showError(getApiErrorMessage(error, 'Brand settings could not be saved. Refresh your admin session and try again.'));
     } finally {
       setSaving(false);
     }
@@ -79,7 +84,7 @@ const BrandSettings = ({ token, brandSettings, onBrandSettingsUpdated, onBrandSe
       showSuccess('Hero background image updated.');
     } catch (error) {
       console.error('Hero background upload failed:', error.response?.data || error.message, error);
-      showError('Hero image upload failed. Use an image below 10MB.');
+      showError(getApiErrorMessage(error, 'Hero image upload failed. Use an image below 10MB.'));
     } finally {
       setUploading(false);
       event.target.value = '';

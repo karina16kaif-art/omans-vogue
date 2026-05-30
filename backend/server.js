@@ -119,6 +119,122 @@ const DEFAULT_BRAND_SETTINGS = {
 
 const isSupabaseConfigured = () => Boolean(SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY);
 const isCloudinaryConfigured = () => Boolean(CLOUDINARY_CLOUD_NAME && CLOUDINARY_API_KEY && CLOUDINARY_API_SECRET);
+const SUPABASE_TABLE_SQL = `
+create table if not exists products (
+  id bigint primary key,
+  name text not null default '',
+  category text not null default '',
+  price numeric not null default 0,
+  in_stock boolean default true,
+  stock_status text default 'In Stock',
+  description text default '',
+  notes text default '',
+  image text default '',
+  image_url text default '',
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+alter table products add column if not exists name text not null default '';
+alter table products add column if not exists category text not null default '';
+alter table products add column if not exists price numeric not null default 0;
+alter table products add column if not exists in_stock boolean default true;
+alter table products add column if not exists stock_status text default 'In Stock';
+alter table products add column if not exists description text default '';
+alter table products add column if not exists notes text default '';
+alter table products add column if not exists image text default '';
+alter table products add column if not exists image_url text default '';
+alter table products add column if not exists created_at timestamptz default now();
+alter table products add column if not exists updated_at timestamptz default now();
+
+create table if not exists orders (
+  id text primary key,
+  customer_name text default '',
+  customer_phone text default '',
+  delivery_phone text default '',
+  delivery_address text default '',
+  city_region text default '',
+  items jsonb default '[]'::jsonb,
+  total_amount numeric default 0,
+  payment_method text default '',
+  payment_status text default 'Pending',
+  order_status text default 'Pending',
+  hubtel jsonb,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+alter table orders add column if not exists customer_name text default '';
+alter table orders add column if not exists customer_phone text default '';
+alter table orders add column if not exists delivery_phone text default '';
+alter table orders add column if not exists delivery_address text default '';
+alter table orders add column if not exists city_region text default '';
+alter table orders add column if not exists items jsonb default '[]'::jsonb;
+alter table orders add column if not exists total_amount numeric default 0;
+alter table orders add column if not exists payment_method text default '';
+alter table orders add column if not exists payment_status text default 'Pending';
+alter table orders add column if not exists order_status text default 'Pending';
+alter table orders add column if not exists hubtel jsonb;
+alter table orders add column if not exists created_at timestamptz default now();
+alter table orders add column if not exists updated_at timestamptz default now();
+
+create table if not exists brand_settings (
+  id bigint primary key default 1,
+  brand_name text default 'OMAN''S VOGUE',
+  hero_eyebrow text default 'L''ART DE LA PARFUMERIE',
+  hero_headline_prefix text default 'WELCOME TO',
+  hero_subtitle text default '“HERE ARE THE PERFECT COLLECTIONS FOR YOUR PERSONAL INNER GROWTH”',
+  hero_background_image text default '/images/hero_bg.png',
+  hero_background_webp text default '/images/hero_bg.webp',
+  whatsapp_number text default '+233591259991',
+  updated_at timestamptz default now()
+);
+
+alter table brand_settings add column if not exists brand_name text default 'OMAN''S VOGUE';
+alter table brand_settings add column if not exists hero_eyebrow text default 'L''ART DE LA PARFUMERIE';
+alter table brand_settings add column if not exists hero_headline_prefix text default 'WELCOME TO';
+alter table brand_settings add column if not exists hero_subtitle text default '“HERE ARE THE PERFECT COLLECTIONS FOR YOUR PERSONAL INNER GROWTH”';
+alter table brand_settings add column if not exists hero_background_image text default '/images/hero_bg.png';
+alter table brand_settings add column if not exists hero_background_webp text default '/images/hero_bg.webp';
+alter table brand_settings add column if not exists whatsapp_number text default '+233591259991';
+alter table brand_settings add column if not exists updated_at timestamptz default now();
+
+insert into brand_settings (
+  id,
+  brand_name,
+  hero_eyebrow,
+  hero_headline_prefix,
+  hero_subtitle,
+  hero_background_image,
+  hero_background_webp,
+  whatsapp_number
+) values (
+  1,
+  'OMAN''S VOGUE',
+  'L''ART DE LA PARFUMERIE',
+  'WELCOME TO',
+  '“HERE ARE THE PERFECT COLLECTIONS FOR YOUR PERSONAL INNER GROWTH”',
+  '/images/hero_bg.png',
+  '/images/hero_bg.webp',
+  '+233591259991'
+) on conflict (id) do nothing;
+`.trim();
+
+const supabaseSetupErrorResponse = (error) => ({
+  error: 'Supabase setup error',
+  message: error?.message || 'Supabase request failed. Confirm tables exist and the service role key is valid.',
+  details: error?.details || null,
+  setupSql: SUPABASE_TABLE_SQL
+});
+
+const logSupabaseError = (label, error) => {
+  console.error(`[Oman’s Vogue Server] ${label}`, {
+    message: error?.message,
+    status: error?.status,
+    details: error?.details,
+    stack: error?.stack
+  });
+};
 
 // Ensure directories exist
 const ensureDir = (dirPath) => {
@@ -185,6 +301,10 @@ const supabaseRequest = async (resource, options = {}) => {
   return data;
 };
 
+const assertSupabaseTablesReady = async () => {
+  await supabaseRequest('brand_settings?select=id,hero_background_image,hero_background_webp&limit=1');
+};
+
 const mapProductFromDb = (row) => ({
   id: row.id,
   name: row.name,
@@ -193,7 +313,7 @@ const mapProductFromDb = (row) => ({
   inStock: row.in_stock !== false,
   description: row.description || '',
   notes: row.notes || '',
-  image: row.image || (row.category === 'Women' ? '/images/products/women_placeholder.png' : '/images/products/men_placeholder.png')
+  image: row.image_url || row.image || (row.category === 'Women' ? '/images/products/women_placeholder.png' : '/images/products/men_placeholder.png')
 });
 
 const mapProductToDb = (product) => ({
@@ -202,9 +322,11 @@ const mapProductToDb = (product) => ({
   category: product.category,
   price: Number(product.price || 0),
   in_stock: product.inStock !== false,
+  stock_status: product.inStock === false ? 'Out of Stock' : 'In Stock',
   description: product.description || '',
   notes: product.notes || '',
   image: product.image || '',
+  image_url: product.image || '',
   updated_at: new Date().toISOString()
 });
 
@@ -255,7 +377,7 @@ const mapSettingsFromDb = (row) => Object.fromEntries(
 );
 
 const mapSettingsToDb = (settings) => ({
-  id: 'default',
+  id: 1,
   brand_name: settings.brandName,
   hero_eyebrow: settings.heroEyebrow,
   hero_headline_prefix: settings.heroHeadlinePrefix,
@@ -390,7 +512,7 @@ const getProducts = async () => {
       }
       return [];
     } catch (error) {
-      console.error('[Oman’s Vogue Server] Supabase products read failed, using JSON fallback:', error.message);
+      logSupabaseError('Supabase products read failed, using JSON fallback:', error);
     }
   }
 
@@ -449,7 +571,7 @@ const getOrders = async () => {
       const rows = await supabaseRequest('orders?select=*&order=created_at.desc');
       return Array.isArray(rows) ? rows.map(mapOrderFromDb) : [];
     } catch (error) {
-      console.error('[Oman’s Vogue Server] Supabase orders read failed, using JSON fallback:', error.message);
+      logSupabaseError('Supabase orders read failed, using JSON fallback:', error);
     }
   }
 
@@ -467,7 +589,7 @@ const saveOrders = async (orders) => {
       });
       return true;
     } catch (error) {
-      console.error('[Oman’s Vogue Server] Supabase orders save failed:', error.message);
+      logSupabaseError('Supabase orders save failed:', error);
       return false;
     }
   }
@@ -480,7 +602,7 @@ const normalizeBrandSetting = (value) => typeof value === 'string' ? value.trim(
 const getBrandSettings = async () => {
   if (isSupabaseConfigured()) {
     try {
-      const rows = await supabaseRequest('brand_settings?select=*&id=eq.default&limit=1');
+      const rows = await supabaseRequest('brand_settings?select=*&id=eq.1&limit=1');
       if (Array.isArray(rows) && rows[0]) {
         return { ...DEFAULT_BRAND_SETTINGS, ...mapSettingsFromDb(rows[0]) };
       }
@@ -488,7 +610,7 @@ const getBrandSettings = async () => {
       await saveBrandSettings(DEFAULT_BRAND_SETTINGS);
       return { ...DEFAULT_BRAND_SETTINGS };
     } catch (error) {
-      console.error('[Oman’s Vogue Server] Supabase settings read failed, using JSON fallback:', error.message);
+      logSupabaseError('Supabase settings read failed, using JSON fallback:', error);
     }
   }
 
@@ -508,7 +630,7 @@ const saveBrandSettings = async (settings) => {
       });
       return true;
     } catch (error) {
-      console.error('[Oman’s Vogue Server] Supabase settings save failed:', error.message);
+      logSupabaseError('Supabase settings save failed:', error);
       return false;
     }
   }
@@ -739,7 +861,7 @@ const saveProducts = async (products) => {
       });
       return true;
     } catch (error) {
-      console.error('[Oman’s Vogue Server] Supabase products save failed:', error.message);
+      logSupabaseError('Supabase products save failed:', error);
       return false;
     }
   }
@@ -778,9 +900,32 @@ app.patch(['/api/brand-settings', '/api/settings'], authenticateAdmin, updateBra
 app.post(['/api/brand-settings', '/api/settings'], authenticateAdmin, updateBrandSettings);
 
 // API: Upload hero background image
-app.post(['/api/brand-settings/hero', '/api/settings/hero'], authenticateAdmin, (req, res) => {
+app.post(['/api/brand-settings/hero', '/api/settings/hero'], authenticateAdmin, async (req, res) => {
+  if (!isCloudinaryConfigured()) {
+    return res.status(503).json({
+      error: 'Cloudinary is not configured',
+      message: 'Set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET on Render before uploading hero images.'
+    });
+  }
+
+  if (!isSupabaseConfigured()) {
+    return res.status(503).json({
+      error: 'Supabase is not configured',
+      message: 'Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY on Render before uploading hero images.',
+      setupSql: SUPABASE_TABLE_SQL
+    });
+  }
+
+  try {
+    await assertSupabaseTablesReady();
+  } catch (setupError) {
+    console.error('[Oman’s Vogue Server] Supabase setup check failed for hero upload:', setupError.details || setupError.message);
+    return res.status(424).json(supabaseSetupErrorResponse(setupError));
+  }
+
   brandUpload.single('image')(req, res, async (err) => {
     if (err) {
+      console.error('[Oman’s Vogue Server] Hero multer upload failed:', err);
       return res.status(400).json({ error: err.message || 'Hero image upload failed' });
     }
     if (!req.file) {
@@ -788,6 +933,7 @@ app.post(['/api/brand-settings/hero', '/api/settings/hero'], authenticateAdmin, 
     }
 
     let savedFilename = req.file.filename;
+    let uploadPath = req.file.path;
 
     try {
       const parsed = path.parse(req.file.filename);
@@ -802,41 +948,60 @@ app.post(['/api/brand-settings/hero', '/api/settings/hero'], authenticateAdmin, 
 
       fs.unlink(req.file.path, () => {});
       savedFilename = webpFilename;
+      uploadPath = webpPath;
     } catch (conversionError) {
       console.warn('[Oman’s Vogue Server] Hero image optimization failed, using original upload.', conversionError);
+      uploadPath = req.file.path;
     }
 
-    let imageUrl = `/uploads/brand/${savedFilename}`;
+    let imageUrl = '';
 
-    if (isCloudinaryConfigured()) {
-      try {
-        const uploadPath = path.join(BRAND_UPLOADS_DIR, savedFilename);
-        const cloudinaryUrl = await uploadImageToCloudinary({
-          filePath: uploadPath,
-          folder: 'omans-vogue/brand',
-          mimeType: savedFilename.endsWith('.webp') ? 'image/webp' : req.file.mimetype
+    try {
+      const cloudinaryUrl = await uploadImageToCloudinary({
+        filePath: uploadPath,
+        folder: 'omans-vogue/brand',
+        mimeType: savedFilename.endsWith('.webp') ? 'image/webp' : req.file.mimetype
+      });
+      imageUrl = cloudinaryUrl;
+      fs.unlink(uploadPath, () => {});
+    } catch (cloudinaryError) {
+      console.error('[Oman’s Vogue Server] Cloudinary hero upload failed:', {
+        message: cloudinaryError.message,
+        cloudNameConfigured: Boolean(CLOUDINARY_CLOUD_NAME),
+        apiKeyConfigured: Boolean(CLOUDINARY_API_KEY),
+        apiSecretConfigured: Boolean(CLOUDINARY_API_SECRET),
+        file: savedFilename
+      });
+      return res.status(502).json({
+        error: 'Cloudinary hero image upload failed',
+        message: cloudinaryError.message || 'Cloudinary rejected the hero image upload. Check Cloudinary credentials on Render.'
+      });
+    }
+
+    try {
+      const settings = {
+        ...await getBrandSettings(),
+        heroBackgroundImage: imageUrl,
+        heroBackgroundWebp: imageUrl
+      };
+
+      if (!await saveBrandSettings(settings)) {
+        return res.status(424).json({
+          error: 'Hero image uploaded, but Supabase settings save failed',
+          message: 'Cloudinary upload succeeded, but brand_settings could not be updated. Confirm the brand_settings table exists and service role key is valid.',
+          imageUrl,
+          setupSql: SUPABASE_TABLE_SQL
         });
-        if (cloudinaryUrl) {
-          imageUrl = cloudinaryUrl;
-          fs.unlink(uploadPath, () => {});
-        }
-      } catch (cloudinaryError) {
-        console.error('[Oman’s Vogue Server] Cloudinary hero upload failed:', cloudinaryError.message);
-        return res.status(502).json({ error: 'Cloudinary hero image upload failed' });
       }
+
+      return res.json({ imageUrl, settings });
+    } catch (settingsError) {
+      console.error('[Oman’s Vogue Server] Hero settings save crashed:', settingsError.details || settingsError.message, settingsError);
+      return res.status(424).json({
+        ...supabaseSetupErrorResponse(settingsError),
+        imageUrl
+      });
     }
-
-    const settings = {
-      ...await getBrandSettings(),
-      heroBackgroundImage: imageUrl,
-      heroBackgroundWebp: imageUrl.endsWith('.webp') || imageUrl.includes('/image/upload/') ? imageUrl : ''
-    };
-
-    if (!await saveBrandSettings(settings)) {
-      return res.status(500).json({ error: 'Hero image uploaded, but settings could not be saved' });
-    }
-
-    res.json({ imageUrl, settings });
   });
 });
 
@@ -948,6 +1113,14 @@ app.patch('/api/products/:id', authenticateAdmin, async (req, res) => {
     updatedProduct.inStock = updates.inStock === true || updates.inStock === 'true';
   }
 
+  if (updates.in_stock !== undefined) {
+    updatedProduct.inStock = updates.in_stock === true || updates.in_stock === 'true';
+  }
+
+  if (updates.stock_status !== undefined) {
+    updatedProduct.inStock = normalizeProductInput(updates.stock_status).toLowerCase() !== 'out of stock';
+  }
+
   if (updates.description !== undefined) {
     updatedProduct.description = normalizeProductInput(updates.description) || '';
   }
@@ -956,8 +1129,8 @@ app.patch('/api/products/:id', authenticateAdmin, async (req, res) => {
     updatedProduct.notes = normalizeProductInput(updates.notes) || '';
   }
 
-  if (updates.image !== undefined) {
-    updatedProduct.image = normalizeStoredImage(updates.image, products[index].image || (updatedProduct.category === 'Women' ? '/images/products/women_placeholder.png' : '/images/products/men_placeholder.png'));
+  if (updates.image !== undefined || updates.image_url !== undefined) {
+    updatedProduct.image = normalizeStoredImage(updates.image_url || updates.image, products[index].image || (updatedProduct.category === 'Women' ? '/images/products/women_placeholder.png' : '/images/products/men_placeholder.png'));
   }
 
   products[index] = updatedProduct;
@@ -986,7 +1159,7 @@ app.delete('/api/products/:id', authenticateAdmin, async (req, res) => {
       await supabaseRequest(`products?id=eq.${encodeURIComponent(productId)}`, { method: 'DELETE' });
       success = true;
     } catch (error) {
-      console.error('[Oman’s Vogue Server] Supabase product delete failed:', error.message);
+      logSupabaseError('Supabase product delete failed:', error);
       success = false;
     }
   } else {
