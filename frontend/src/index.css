@@ -4,12 +4,31 @@
 
 /* Luxury Fonts Setup and Global Resets */
 body {
-  background-color: #0a0506;
-  color: #ebd2b0;
+  background:
+    radial-gradient(circle at 20% 10%, rgba(255, 255, 255, 0.96), transparent 28%),
+    linear-gradient(135deg, #fbfcf7 0%, #f3f8ef 44%, #e7f0df 100%);
+  color: #1f382a;
   font-family: 'Montserrat', sans-serif;
   overflow-x: hidden;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+body::before {
+  content: '';
+  position: fixed;
+  inset: -12%;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.28;
+  background-image: url("data:image/svg+xml,%3Csvg width='180' height='180' viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' stroke='%23ffffff' stroke-opacity='.72' stroke-width='1.1'%3E%3Cpath d='M89 82c-17-16-6-38 13-32 13 4 14 20 1 31 18-7 35 7 27 24-8 16-31 10-38-7-2 21-24 30-37 15-12-15 5-34 27-29-19-12-17-35 1-39 18-4 29 17 6 37Z'/%3E%3Cpath d='M91 99c9 24-4 43-22 50M92 101c20 5 34 16 45 34M74 135c-12-7-26-7-39 0M124 128c12-9 25-12 40-8'/%3E%3C/g%3E%3C/svg%3E");
+  background-size: 220px 220px;
+  animation: whiteRoseDrift 38s linear infinite;
+}
+
+#root {
+  position: relative;
+  z-index: 1;
 }
 
 /* Slim Premium Scrollbars */
@@ -19,41 +38,41 @@ body {
 }
 
 ::-webkit-scrollbar-track {
-  background: #0a0506;
+  background: #f7faf4;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #2d050b;
+  background: #91ad78;
   border-radius: 4px;
-  border: 1px solid rgba(183, 110, 121, 0.2);
+  border: 1px solid rgba(31, 56, 42, 0.08);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #b76e79;
+  background: #6f9872;
 }
 
 /* Glassmorphism Presets */
 .glass-panel {
-  background: rgba(20, 12, 13, 0.65);
+  background: rgba(255, 255, 255, 0.62);
   backdrop-filter: blur(16px) saturate(140%);
   -webkit-backdrop-filter: blur(16px) saturate(140%);
-  border: 1px solid rgba(183, 110, 121, 0.12);
-  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(111, 152, 114, 0.2);
+  box-shadow: 0 18px 48px 0 rgba(62, 89, 61, 0.13);
 }
 
 .glass-panel-heavy {
-  background: rgba(10, 5, 6, 0.9);
+  background: rgba(255, 255, 255, 0.84);
   backdrop-filter: blur(24px) saturate(160%);
   -webkit-backdrop-filter: blur(24px) saturate(160%);
-  border: 1px solid rgba(183, 110, 121, 0.2);
-  box-shadow: 0 12px 40px 0 rgba(0, 0, 0, 0.7);
+  border: 1px solid rgba(111, 152, 114, 0.26);
+  box-shadow: 0 24px 60px 0 rgba(62, 89, 61, 0.18);
 }
 
 .glass-panel-light {
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(255, 255, 255, 0.5);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(111, 152, 114, 0.12);
 }
 
 /* Custom Interactive Cursor Glow */
@@ -62,7 +81,7 @@ body {
   position: fixed;
   width: 400px;
   height: 400px;
-  background: radial-gradient(circle, rgba(74, 14, 23, 0.15) 0%, rgba(183, 110, 121, 0.04) 40%, rgba(0, 0, 0, 0) 70%);
+  background: radial-gradient(circle, rgba(111, 152, 114, 0.2) 0%, rgba(199, 163, 74, 0.08) 40%, rgba(255, 255, 255, 0) 70%);
   transform: translate(-50%, -50%);
   z-index: 1;
   transition: width 0.3s ease, height 0.3s ease;
@@ -70,7 +89,7 @@ body {
 
 /* Golden / Rose Gold luxury text gradient */
 .text-gold-gradient {
-  background: linear-gradient(135deg, #ebd2b0 0%, #b76e79 50%, #d4af37 100%);
+  background: linear-gradient(135deg, #1f382a 0%, #6f9872 48%, #c7a34a 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
 }
@@ -91,7 +110,7 @@ body {
   background: linear-gradient(
     to right,
     rgba(255, 255, 255, 0) 0%,
-    rgba(255, 255, 255, 0.15) 50%,
+    rgba(255, 255, 255, 0.45) 50%,
     rgba(255, 255, 255, 0) 100%
   );
   transform: skewX(-25deg);
@@ -113,6 +132,15 @@ body {
   }
   100% {
     transform: scale(1.1) translate(-1%, -1%);
+  }
+}
+
+@keyframes whiteRoseDrift {
+  0% {
+    transform: translate3d(0, 0, 0) rotate(0deg);
+  }
+  100% {
+    transform: translate3d(-80px, -80px, 0) rotate(1deg);
   }
 }
 
@@ -141,7 +169,7 @@ body {
 }
 
 .tilt-card:hover {
-  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6), 0 0 30px rgba(183, 110, 121, 0.15);
+  box-shadow: 0 20px 42px rgba(62, 89, 61, 0.18), 0 0 30px rgba(199, 163, 74, 0.13);
 }
 
 .tilt-card-inner {
@@ -150,7 +178,7 @@ body {
 
 /* Custom Out of Stock badge overlay */
 .out-of-stock-overlay {
-  background: rgba(10, 5, 6, 0.75);
+  background: rgba(247, 250, 244, 0.76);
   backdrop-filter: blur(4px);
 }
 
@@ -208,7 +236,7 @@ body {
 
 @media (pointer: coarse) {
   .tilt-card:hover {
-    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.48), 0 0 18px rgba(183, 110, 121, 0.1);
+    box-shadow: 0 12px 28px rgba(62, 89, 61, 0.14), 0 0 18px rgba(199, 163, 74, 0.08);
   }
 
   .btn-shimmer::after {
@@ -228,4 +256,16 @@ body {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+.text-white {
+  color: #173321 !important;
+}
+
+.bg-white {
+  background-color: #173321 !important;
+}
+
+.text-luxury-black {
+  color: #f7faf4 !important;
 }

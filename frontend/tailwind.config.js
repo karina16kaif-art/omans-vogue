@@ -8,13 +8,13 @@ export default {
     extend: {
       colors: {
         luxury: {
-          black: "#0a0506",
-          charcoal: "#140c0d",
-          burgundy: "#2d050b",
-          wine: "#4a0e17",
-          rosegold: "#b76e79",
-          gold: "#d4af37",
-          champagne: "#ebd2b0",
+          black: "#f7faf4",
+          charcoal: "#edf4e9",
+          burgundy: "#d8e8d3",
+          wine: "#6f9872",
+          rosegold: "#91ad78",
+          gold: "#c7a34a",
+          champagne: "#1f382a",
         }
       },
       fontFamily: {
@@ -37,8 +37,8 @@ export default {
           '100%': { opacity: '1', transform: 'translateY(0)' },
         },
         pulseGlow: {
-          '0%, 100%': { opacity: '0.3', filter: 'drop-shadow(0 0 5px rgba(183, 110, 121, 0.4))' },
-          '50%': { opacity: '0.8', filter: 'drop-shadow(0 0 15px rgba(212, 175, 55, 0.8))' },
+          '0%, 100%': { opacity: '0.3', filter: 'drop-shadow(0 0 5px rgba(145, 173, 120, 0.35))' },
+          '50%': { opacity: '0.8', filter: 'drop-shadow(0 0 15px rgba(199, 163, 74, 0.65))' },
         },
         slowZoom: {
           '0%': { transform: 'scale(1)' },

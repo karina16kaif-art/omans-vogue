@@ -35,6 +35,11 @@ const GMAIL_USER = process.env.GMAIL_USER || '';
 const GMAIL_APP_PASSWORD = process.env.GMAIL_APP_PASSWORD || '';
 const ADMIN_WHATSAPP_NUMBER = process.env.ADMIN_WHATSAPP_NUMBER || '';
 const WHATSAPP_ALERT_WEBHOOK_URL = process.env.WHATSAPP_ALERT_WEBHOOK_URL || '';
+const SUPABASE_URL = (process.env.SUPABASE_URL || '').replace(/\/+$/, '');
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+const CLOUDINARY_CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME || '';
+const CLOUDINARY_API_KEY = process.env.CLOUDINARY_API_KEY || '';
+const CLOUDINARY_API_SECRET = process.env.CLOUDINARY_API_SECRET || '';
 const ALLOWED_ORIGINS = (process.env.CORS_ORIGINS || [
   CLIENT_ORIGIN,
   'http://localhost:5173',
@@ -112,6 +117,9 @@ const DEFAULT_BRAND_SETTINGS = {
   whatsappNumber: '+233591259991'
 };
 
+const isSupabaseConfigured = () => Boolean(SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY);
+const isCloudinaryConfigured = () => Boolean(CLOUDINARY_CLOUD_NAME && CLOUDINARY_API_KEY && CLOUDINARY_API_SECRET);
+
 // Ensure directories exist
 const ensureDir = (dirPath) => {
   if (!fs.existsSync(dirPath)) {
@@ -146,6 +154,146 @@ const writeJsonFile = (filePath, value) => {
     console.error(`[Oman’s Vogue Server] Failed to write JSON: ${filePath}`, error);
     return false;
   }
+};
+
+const supabaseRequest = async (resource, options = {}) => {
+  if (!isSupabaseConfigured()) {
+    throw new Error('Supabase is not configured');
+  }
+
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/${resource}`, {
+    ...options,
+    headers: {
+      apikey: SUPABASE_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      'Content-Type': 'application/json',
+      ...(options.headers || {})
+    }
+  });
+
+  const text = await response.text();
+  const data = text ? JSON.parse(text) : null;
+
+  if (!response.ok) {
+    const message = data?.message || data?.error || `Supabase request failed: ${response.status}`;
+    const error = new Error(message);
+    error.status = response.status;
+    error.details = data;
+    throw error;
+  }
+
+  return data;
+};
+
+const mapProductFromDb = (row) => ({
+  id: row.id,
+  name: row.name,
+  category: row.category,
+  price: Number(row.price || 0),
+  inStock: row.in_stock !== false,
+  description: row.description || '',
+  notes: row.notes || '',
+  image: row.image || (row.category === 'Women' ? '/images/products/women_placeholder.png' : '/images/products/men_placeholder.png')
+});
+
+const mapProductToDb = (product) => ({
+  id: product.id,
+  name: product.name,
+  category: product.category,
+  price: Number(product.price || 0),
+  in_stock: product.inStock !== false,
+  description: product.description || '',
+  notes: product.notes || '',
+  image: product.image || '',
+  updated_at: new Date().toISOString()
+});
+
+const mapOrderFromDb = (row) => ({
+  id: row.id,
+  customerName: row.customer_name,
+  customerPhone: row.customer_phone,
+  deliveryPhone: row.delivery_phone,
+  deliveryAddress: row.delivery_address,
+  cityRegion: row.city_region,
+  items: Array.isArray(row.items) ? row.items : [],
+  totalAmount: Number(row.total_amount || 0),
+  paymentMethod: row.payment_method,
+  paymentStatus: row.payment_status,
+  orderStatus: row.order_status,
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
+  hubtel: row.hubtel || null
+});
+
+const mapOrderToDb = (order) => ({
+  id: order.id,
+  customer_name: order.customerName,
+  customer_phone: order.customerPhone,
+  delivery_phone: order.deliveryPhone,
+  delivery_address: order.deliveryAddress,
+  city_region: order.cityRegion,
+  items: Array.isArray(order.items) ? order.items : [],
+  total_amount: Number(order.totalAmount || 0),
+  payment_method: order.paymentMethod,
+  payment_status: order.paymentStatus,
+  order_status: order.orderStatus,
+  created_at: order.createdAt,
+  updated_at: order.updatedAt || new Date().toISOString(),
+  hubtel: order.hubtel || null
+});
+
+const mapSettingsFromDb = (row) => Object.fromEntries(
+  Object.entries({
+    brandName: row.brand_name,
+    heroEyebrow: row.hero_eyebrow,
+    heroHeadlinePrefix: row.hero_headline_prefix,
+    heroSubtitle: row.hero_subtitle,
+    heroBackgroundImage: row.hero_background_image,
+    heroBackgroundWebp: row.hero_background_webp,
+    whatsappNumber: row.whatsapp_number
+  }).filter(([, value]) => value !== undefined && value !== null && value !== '')
+);
+
+const mapSettingsToDb = (settings) => ({
+  id: 'default',
+  brand_name: settings.brandName,
+  hero_eyebrow: settings.heroEyebrow,
+  hero_headline_prefix: settings.heroHeadlinePrefix,
+  hero_subtitle: settings.heroSubtitle,
+  hero_background_image: settings.heroBackgroundImage,
+  hero_background_webp: settings.heroBackgroundWebp,
+  whatsapp_number: settings.whatsappNumber,
+  updated_at: new Date().toISOString()
+});
+
+const uploadImageToCloudinary = async ({ filePath, folder, mimeType }) => {
+  if (!isCloudinaryConfigured()) {
+    return null;
+  }
+
+  const timestamp = Math.floor(Date.now() / 1000);
+  const signaturePayload = `folder=${folder}&timestamp=${timestamp}${CLOUDINARY_API_SECRET}`;
+  const signature = crypto.createHash('sha1').update(signaturePayload).digest('hex');
+  const formData = new FormData();
+  const fileBuffer = fs.readFileSync(filePath);
+
+  formData.append('file', new Blob([fileBuffer], { type: mimeType || 'image/webp' }), path.basename(filePath));
+  formData.append('api_key', CLOUDINARY_API_KEY);
+  formData.append('timestamp', String(timestamp));
+  formData.append('folder', folder);
+  formData.append('signature', signature);
+
+  const response = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`, {
+    method: 'POST',
+    body: formData
+  });
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok || !data.secure_url) {
+    throw new Error(data.error?.message || 'Cloudinary upload failed');
+  }
+
+  return data.secure_url;
 };
 
 ensureDir(DATA_DIR);
@@ -227,7 +375,25 @@ const brandUpload = multer({
 });
 
 // Helper to read products
-const getProducts = () => {
+const getProducts = async () => {
+  if (isSupabaseConfigured()) {
+    try {
+      const rows = await supabaseRequest('products?select=*&order=id.asc');
+      if (Array.isArray(rows) && rows.length > 0) {
+        return rows.map(mapProductFromDb);
+      }
+
+      const fallbackProducts = readJsonFile(DATA_FILE, []);
+      if (Array.isArray(fallbackProducts) && fallbackProducts.length > 0) {
+        await saveProducts(fallbackProducts);
+        return fallbackProducts;
+      }
+      return [];
+    } catch (error) {
+      console.error('[Oman’s Vogue Server] Supabase products read failed, using JSON fallback:', error.message);
+    }
+  }
+
   const products = readJsonFile(DATA_FILE, []);
   return Array.isArray(products) ? products : [];
 };
@@ -277,28 +443,81 @@ const isHubtelConfigured = () => Boolean(
   HUBTEL_RETURN_URL
 );
 
-const getOrders = () => {
+const getOrders = async () => {
+  if (isSupabaseConfigured()) {
+    try {
+      const rows = await supabaseRequest('orders?select=*&order=created_at.desc');
+      return Array.isArray(rows) ? rows.map(mapOrderFromDb) : [];
+    } catch (error) {
+      console.error('[Oman’s Vogue Server] Supabase orders read failed, using JSON fallback:', error.message);
+    }
+  }
+
   const orders = readJsonFile(ORDERS_FILE, []);
   return Array.isArray(orders) ? orders : [];
 };
 
-const saveOrders = (orders) => {
+const saveOrders = async (orders) => {
+  if (isSupabaseConfigured()) {
+    try {
+      await supabaseRequest('orders?on_conflict=id', {
+        method: 'POST',
+        headers: { Prefer: 'resolution=merge-duplicates' },
+        body: JSON.stringify((Array.isArray(orders) ? orders : []).map(mapOrderToDb))
+      });
+      return true;
+    } catch (error) {
+      console.error('[Oman’s Vogue Server] Supabase orders save failed:', error.message);
+      return false;
+    }
+  }
+
   return writeJsonFile(ORDERS_FILE, Array.isArray(orders) ? orders : []);
 };
 
 const normalizeBrandSetting = (value) => typeof value === 'string' ? value.trim() : value;
 
-const getBrandSettings = () => {
+const getBrandSettings = async () => {
+  if (isSupabaseConfigured()) {
+    try {
+      const rows = await supabaseRequest('brand_settings?select=*&id=eq.default&limit=1');
+      if (Array.isArray(rows) && rows[0]) {
+        return { ...DEFAULT_BRAND_SETTINGS, ...mapSettingsFromDb(rows[0]) };
+      }
+
+      await saveBrandSettings(DEFAULT_BRAND_SETTINGS);
+      return { ...DEFAULT_BRAND_SETTINGS };
+    } catch (error) {
+      console.error('[Oman’s Vogue Server] Supabase settings read failed, using JSON fallback:', error.message);
+    }
+  }
+
   const parsed = readJsonFile(SETTINGS_FILE, DEFAULT_BRAND_SETTINGS);
   return { ...DEFAULT_BRAND_SETTINGS, ...(parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}) };
 };
 
-const saveBrandSettings = (settings) => {
-  return writeJsonFile(SETTINGS_FILE, { ...DEFAULT_BRAND_SETTINGS, ...(settings || {}) });
+const saveBrandSettings = async (settings) => {
+  const nextSettings = { ...DEFAULT_BRAND_SETTINGS, ...(settings || {}) };
+
+  if (isSupabaseConfigured()) {
+    try {
+      await supabaseRequest('brand_settings?on_conflict=id', {
+        method: 'POST',
+        headers: { Prefer: 'resolution=merge-duplicates' },
+        body: JSON.stringify(mapSettingsToDb(nextSettings))
+      });
+      return true;
+    } catch (error) {
+      console.error('[Oman’s Vogue Server] Supabase settings save failed:', error.message);
+      return false;
+    }
+  }
+
+  return writeJsonFile(SETTINGS_FILE, nextSettings);
 };
 
-const normalizeBrandPayload = (body) => {
-  const current = getBrandSettings();
+const normalizeBrandPayload = async (body) => {
+  const current = await getBrandSettings();
   const updates = {};
   [
     'brandName',
@@ -510,7 +729,21 @@ const buildOrderAnalytics = (orders, products) => {
 };
 
 // Helper to write products
-const saveProducts = (products) => {
+const saveProducts = async (products) => {
+  if (isSupabaseConfigured()) {
+    try {
+      await supabaseRequest('products?on_conflict=id', {
+        method: 'POST',
+        headers: { Prefer: 'resolution=merge-duplicates' },
+        body: JSON.stringify((Array.isArray(products) ? products : []).map(mapProductToDb))
+      });
+      return true;
+    } catch (error) {
+      console.error('[Oman’s Vogue Server] Supabase products save failed:', error.message);
+      return false;
+    }
+  }
+
   return writeJsonFile(DATA_FILE, Array.isArray(products) ? products : []);
 };
 
@@ -527,15 +760,15 @@ app.get('/health', (req, res) => {
 });
 
 // API: Public brand settings
-app.get(['/api/brand-settings', '/api/settings'], (req, res) => {
+app.get(['/api/brand-settings', '/api/settings'], async (req, res) => {
   res.set('Cache-Control', 'no-store');
-  res.json(getBrandSettings());
+  res.json(await getBrandSettings());
 });
 
 // API: Update brand settings
-const updateBrandSettings = (req, res) => {
-  const settings = normalizeBrandPayload(req.body || {});
-  if (!saveBrandSettings(settings)) {
+const updateBrandSettings = async (req, res) => {
+  const settings = await normalizeBrandPayload(req.body || {});
+  if (!await saveBrandSettings(settings)) {
     return res.status(500).json({ error: 'Failed to save brand settings' });
   }
   res.json(settings);
@@ -573,14 +806,33 @@ app.post(['/api/brand-settings/hero', '/api/settings/hero'], authenticateAdmin, 
       console.warn('[Oman’s Vogue Server] Hero image optimization failed, using original upload.', conversionError);
     }
 
-    const imageUrl = `/uploads/brand/${savedFilename}`;
+    let imageUrl = `/uploads/brand/${savedFilename}`;
+
+    if (isCloudinaryConfigured()) {
+      try {
+        const uploadPath = path.join(BRAND_UPLOADS_DIR, savedFilename);
+        const cloudinaryUrl = await uploadImageToCloudinary({
+          filePath: uploadPath,
+          folder: 'omans-vogue/brand',
+          mimeType: savedFilename.endsWith('.webp') ? 'image/webp' : req.file.mimetype
+        });
+        if (cloudinaryUrl) {
+          imageUrl = cloudinaryUrl;
+          fs.unlink(uploadPath, () => {});
+        }
+      } catch (cloudinaryError) {
+        console.error('[Oman’s Vogue Server] Cloudinary hero upload failed:', cloudinaryError.message);
+        return res.status(502).json({ error: 'Cloudinary hero image upload failed' });
+      }
+    }
+
     const settings = {
-      ...getBrandSettings(),
+      ...await getBrandSettings(),
       heroBackgroundImage: imageUrl,
-      heroBackgroundWebp: imageUrl.endsWith('.webp') ? imageUrl : ''
+      heroBackgroundWebp: imageUrl.endsWith('.webp') || imageUrl.includes('/image/upload/') ? imageUrl : ''
     };
 
-    if (!saveBrandSettings(settings)) {
+    if (!await saveBrandSettings(settings)) {
       return res.status(500).json({ error: 'Hero image uploaded, but settings could not be saved' });
     }
 
@@ -608,18 +860,18 @@ app.get('/api/auth/verify', authenticateAdmin, (req, res) => {
 });
 
 // API: Get all products
-app.get('/api/products', (req, res) => {
+app.get('/api/products', async (req, res) => {
   const wantsFresh = req.query.fresh === '1' || Boolean(req.headers.authorization);
   res.set(
     'Cache-Control',
     wantsFresh ? 'no-store' : 'public, max-age=30, s-maxage=300, stale-while-revalidate=600'
   );
-  const products = getProducts();
+  const products = await getProducts();
   res.json(products);
 });
 
 // API: Add new product
-app.post('/api/products', authenticateAdmin, (req, res) => {
+app.post('/api/products', authenticateAdmin, async (req, res) => {
   const { name, category, price, inStock, description, notes, image } = req.body;
   
   const normalizedName = normalizeProductInput(name);
@@ -630,7 +882,7 @@ app.post('/api/products', authenticateAdmin, (req, res) => {
     return res.status(400).json({ error: 'Name, valid category, and positive price are required' });
   }
 
-  const products = getProducts();
+  const products = await getProducts();
   const nextId = products.length > 0 ? Math.max(...products.map(p => p.id)) + 1 : 1;
 
   const newProduct = {
@@ -645,7 +897,7 @@ app.post('/api/products', authenticateAdmin, (req, res) => {
   };
 
   products.push(newProduct);
-  const success = saveProducts(products);
+  const success = await saveProducts(products);
 
   if (success) {
     res.status(201).json(newProduct);
@@ -655,11 +907,11 @@ app.post('/api/products', authenticateAdmin, (req, res) => {
 });
 
 // API: Update product (e.g. toggle stock, edit details)
-app.patch('/api/products/:id', authenticateAdmin, (req, res) => {
+app.patch('/api/products/:id', authenticateAdmin, async (req, res) => {
   const productId = Number(req.params.id);
   const updates = req.body;
   
-  const products = getProducts();
+  const products = await getProducts();
   const index = products.findIndex(p => p.id === productId);
 
   if (index === -1) {
@@ -709,7 +961,7 @@ app.patch('/api/products/:id', authenticateAdmin, (req, res) => {
   }
 
   products[index] = updatedProduct;
-  const success = saveProducts(products);
+  const success = await saveProducts(products);
 
   if (success) {
     res.json(updatedProduct);
@@ -719,16 +971,27 @@ app.patch('/api/products/:id', authenticateAdmin, (req, res) => {
 });
 
 // API: Delete product
-app.delete('/api/products/:id', authenticateAdmin, (req, res) => {
+app.delete('/api/products/:id', authenticateAdmin, async (req, res) => {
   const productId = Number(req.params.id);
-  const products = getProducts();
+  const products = await getProducts();
   
   const filtered = products.filter(p => p.id !== productId);
   if (products.length === filtered.length) {
     return res.status(404).json({ error: 'Product not found' });
   }
 
-  const success = saveProducts(filtered);
+  let success = false;
+  if (isSupabaseConfigured()) {
+    try {
+      await supabaseRequest(`products?id=eq.${encodeURIComponent(productId)}`, { method: 'DELETE' });
+      success = true;
+    } catch (error) {
+      console.error('[Oman’s Vogue Server] Supabase product delete failed:', error.message);
+      success = false;
+    }
+  } else {
+    success = await saveProducts(filtered);
+  }
   if (success) {
     res.json({ message: 'Product deleted successfully', id: productId });
   } else {
@@ -765,13 +1028,32 @@ app.post('/api/upload', authenticateAdmin, (req, res) => {
       console.warn('[Oman’s Vogue Server] Image optimization failed, using original upload.', conversionError);
     }
 
-    const fileUrl = `/uploads/products/${savedFilename}`;
+    let fileUrl = `/uploads/products/${savedFilename}`;
+
+    if (isCloudinaryConfigured()) {
+      try {
+        const uploadPath = path.join(UPLOADS_DIR, savedFilename);
+        const cloudinaryUrl = await uploadImageToCloudinary({
+          filePath: uploadPath,
+          folder: 'omans-vogue/products',
+          mimeType: savedFilename.endsWith('.webp') ? 'image/webp' : req.file.mimetype
+        });
+        if (cloudinaryUrl) {
+          fileUrl = cloudinaryUrl;
+          fs.unlink(uploadPath, () => {});
+        }
+      } catch (cloudinaryError) {
+        console.error('[Oman’s Vogue Server] Cloudinary product upload failed:', cloudinaryError.message);
+        return res.status(502).json({ error: 'Cloudinary product image upload failed' });
+      }
+    }
+
     res.json({ imageUrl: fileUrl });
   });
 });
 
 // API: Create customer order
-app.post('/api/orders', (req, res) => {
+app.post('/api/orders', async (req, res) => {
   const normalized = normalizeOrderPayload(req.body || {});
 
   if (
@@ -804,10 +1086,10 @@ app.post('/api/orders', (req, res) => {
     hubtel: null
   };
 
-  const orders = getOrders();
+  const orders = await getOrders();
   orders.unshift(order);
 
-  if (!saveOrders(orders)) {
+  if (!await saveOrders(orders)) {
     return res.status(500).json({ error: 'Failed to save order' });
   }
 
@@ -820,13 +1102,13 @@ app.post('/api/orders', (req, res) => {
 });
 
 // API: Admin get orders with filters
-app.get('/api/orders', authenticateAdmin, (req, res) => {
+app.get('/api/orders', authenticateAdmin, async (req, res) => {
   const { period, paymentStatus, orderStatus } = req.query;
   const now = new Date();
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
-  let orders = getOrders();
+  let orders = await getOrders();
 
   if (period === 'today') {
     orders = orders.filter(order => new Date(order.createdAt) >= startOfToday);
@@ -854,19 +1136,19 @@ app.get('/api/orders', authenticateAdmin, (req, res) => {
 });
 
 // API: Admin analytics
-app.get(['/api/orders/analytics', '/api/analytics'], authenticateAdmin, (req, res) => {
+app.get(['/api/orders/analytics', '/api/analytics'], authenticateAdmin, async (req, res) => {
   res.set('Cache-Control', 'no-store');
-  res.json(buildOrderAnalytics(getOrders(), getProducts()));
+  res.json(buildOrderAnalytics(await getOrders(), await getProducts()));
 });
 
 // API: Admin update delivery/order status
-app.patch('/api/orders/:id/status', authenticateAdmin, (req, res) => {
+app.patch('/api/orders/:id/status', authenticateAdmin, async (req, res) => {
   const nextStatus = normalizeOrderInput(req.body?.orderStatus);
   if (!ACCEPTED_ORDER_STATUSES.includes(nextStatus)) {
     return res.status(400).json({ error: 'Invalid order status' });
   }
 
-  const orders = getOrders();
+  const orders = await getOrders();
   const index = orders.findIndex(order => order.id === req.params.id);
   if (index === -1) {
     return res.status(404).json({ error: 'Order not found' });
@@ -878,7 +1160,7 @@ app.patch('/api/orders/:id/status', authenticateAdmin, (req, res) => {
     updatedAt: new Date().toISOString()
   };
 
-  if (!saveOrders(orders)) {
+  if (!await saveOrders(orders)) {
     return res.status(500).json({ error: 'Failed to update order' });
   }
 
@@ -892,7 +1174,7 @@ app.post('/api/payments/hubtel/initiate', async (req, res) => {
   }
 
   const { orderId } = req.body || {};
-  const orders = getOrders();
+  const orders = await getOrders();
   const index = orders.findIndex(order => order.id === orderId);
   if (index === -1) {
     return res.status(404).json({ error: 'Order not found' });
@@ -934,7 +1216,7 @@ app.post('/api/payments/hubtel/initiate', async (req, res) => {
         },
         updatedAt: new Date().toISOString()
       };
-      saveOrders(orders);
+      await saveOrders(orders);
       return res.status(502).json({ error: 'Hubtel payment initiation failed', details: data });
     }
 
@@ -951,7 +1233,7 @@ app.post('/api/payments/hubtel/initiate', async (req, res) => {
       },
       updatedAt: new Date().toISOString()
     };
-    saveOrders(orders);
+    await saveOrders(orders);
 
     return res.json({
       configured: true,
@@ -965,7 +1247,7 @@ app.post('/api/payments/hubtel/initiate', async (req, res) => {
 });
 
 // API: Hubtel webhook callback
-app.post('/api/payments/hubtel/webhook', (req, res) => {
+app.post('/api/payments/hubtel/webhook', async (req, res) => {
   const payload = req.body || {};
   const data = payload.data || {};
   const clientReference = data.clientReference || payload.clientReference;
@@ -974,7 +1256,7 @@ app.post('/api/payments/hubtel/webhook', (req, res) => {
     return res.status(400).json({ error: 'Missing clientReference' });
   }
 
-  const orders = getOrders();
+  const orders = await getOrders();
   const index = orders.findIndex(order => order.id === clientReference);
   if (index === -1) {
     return res.status(404).json({ error: 'Order not found' });
@@ -1002,7 +1284,7 @@ app.post('/api/payments/hubtel/webhook', (req, res) => {
     updatedAt: new Date().toISOString()
   };
 
-  saveOrders(orders);
+  await saveOrders(orders);
   res.json({ ok: true });
 });
 
