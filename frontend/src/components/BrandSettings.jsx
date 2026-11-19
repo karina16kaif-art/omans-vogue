@@ -13,6 +13,7 @@ const DEFAULT_SETTINGS = {
   whatsappNumber: '+233591259991',
   momoNumber: '',
   momoAccountName: '',
+  momoPaymentInstructions: '',
   pickupLocation: 'Jean Nelson Hostel, University of Ghana, Legon',
   campusDeliveryFee: 10,
   storefront: {}
@@ -169,6 +170,17 @@ const BrandSettings = ({ token, brandSettings, onBrandSettingsUpdated, onBrandSe
             <legend className="text-sm uppercase tracking-widest text-luxury-rosegold font-bold mb-2">Checkout settings</legend>
             <Input label="MoMo payment number" type="tel" value={settings.momoNumber} onChange={(value) => handleChange('momoNumber', value)} />
             <Input label="MoMo account name" maxLength={120} value={settings.momoAccountName} onChange={(value) => handleChange('momoAccountName', value)} />
+            <label className="flex flex-col gap-1 text-sm text-luxury-champagne/80 font-semibold sm:col-span-2">
+              MoMo payment instructions
+              <textarea
+                rows={3}
+                maxLength={500}
+                value={settings.momoPaymentInstructions}
+                onChange={event => handleChange('momoPaymentInstructions', event.target.value)}
+                className="px-4 py-2.5 bg-luxury-black border border-luxury-rosegold/10 text-white text-xs focus:border-luxury-rosegold focus:outline-none"
+              />
+              <span className="text-xs font-normal">Optional directions shown to customers at checkout. Use customer-facing text only.</span>
+            </label>
             <Input label="Pickup location" required maxLength={180} value={settings.pickupLocation} onChange={(value) => handleChange('pickupLocation', value)} />
             <Input label="Campus delivery fee (GH₵)" type="number" min="0" step="0.01" required value={settings.campusDeliveryFee} onChange={(value) => handleChange('campusDeliveryFee', value)} />
           </fieldset>

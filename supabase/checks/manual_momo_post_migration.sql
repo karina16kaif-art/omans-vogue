@@ -1,4 +1,4 @@
--- After all three migrations, run as a database administrator on the target project.
+-- After the release migrations, run as a database administrator on the target project.
 -- Returns aggregate counts and permissions without exposing customer records or credentials.
 with permissions as (
   select r.rolname as role_name, t.relname as table_name, t.relrowsecurity as rls_enabled,
@@ -29,6 +29,11 @@ select jsonb_build_object(
   'fee_mismatches', (select count(*) from public.brand_settings where delivery_fee is distinct from campus_delivery_fee),
   'settings_row_present', exists (select 1 from public.brand_settings where id = 1),
   'settings_revision_ready', exists (select 1 from public.brand_settings where id = 1 and settings_revision is not null),
+  'payment_instructions_ready', exists (
+    select 1 from pg_attribute where attrelid = 'public.brand_settings'::regclass
+      and attname = 'momo_payment_instructions' and atttypid = 'text'::regtype
+      and attnotnull and atthasdef and not attisdropped
+  ),
   'published_product_count', (select count(*) from public.products where archived_at is null and published),
   'publication_guard_ready', exists (
     select 1 from pg_trigger where tgrelid = 'public.orders'::regclass

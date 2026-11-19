@@ -113,6 +113,7 @@ const DEFAULT_BRAND_SETTINGS = {
   whatsappNumber: '+233591259991',
   momoNumber: '',
   momoAccountName: '',
+  momoPaymentInstructions: '',
   pickupLocation: `Jean Nelson Hostel, ${campus}`,
   campusDeliveryFee: 10
 };
@@ -284,8 +285,7 @@ const mapOrderFromDb = (row) => ({
       : row.status ?? row.order_status
   ),
   createdAt: row.created_at,
-  updatedAt: row.updated_at,
-  hubtel: row.hubtel || null
+  updatedAt: row.updated_at
 });
 
 const mapOrderToDb = (order) => ({
@@ -323,6 +323,7 @@ const mapSettingsFromDb = (row) => Object.fromEntries(
     whatsappNumber: row.whatsapp_number,
     momoNumber: row.momo_number,
     momoAccountName: row.momo_account_name,
+    momoPaymentInstructions: row.momo_payment_instructions,
     pickupLocation: row.pickup_location,
     campusDeliveryFee: optionalNumeric(row.campus_delivery_fee ?? row.delivery_fee),
     storefront: row.storefront,
@@ -341,6 +342,7 @@ const mapSettingsToDb = (settings) => ({
   whatsapp_number: settings.whatsappNumber,
   momo_number: settings.momoNumber,
   momo_account_name: settings.momoAccountName,
+  momo_payment_instructions: settings.momoPaymentInstructions,
   pickup_location: settings.pickupLocation,
   delivery_fee: settings.campusDeliveryFee,
   storefront: settings.storefront,
@@ -600,6 +602,13 @@ const normalizeBrandPayload = (body, storefront) => {
     if (name.length > 120) throw checkoutError(400, 'Use up to 120 characters for the MoMo account name.');
     updates.momoAccountName = name;
   }
+  if (body.momoPaymentInstructions !== undefined) {
+    const instructions = body.momoPaymentInstructions;
+    if (typeof instructions !== 'string' || instructions.trim().length > 500) {
+      throw checkoutError(400, 'Use up to 500 characters of text for MoMo payment instructions.');
+    }
+    updates.momoPaymentInstructions = instructions.trim();
+  }
   if (body.pickupLocation !== undefined) {
     const location = cleanText(body.pickupLocation);
     if (!location || location.length > 180) throw checkoutError(400, 'Enter a pickup location of up to 180 characters.');
@@ -792,7 +801,7 @@ app.get('/health', (req, res) => {
 // API: Public brand settings
 app.get(['/api/brand-settings', '/api/settings'], async (req, res) => {
   res.set('Cache-Control', 'no-store');
-  const { momoNumber, momoAccountName, settingsRevision, ...publicSettings } = await getBrandSettings();
+  const { momoNumber, momoAccountName, momoPaymentInstructions, settingsRevision, ...publicSettings } = await getBrandSettings();
   res.json(publicSettings);
 });
 
@@ -938,7 +947,7 @@ app.get('/api/storefront/catalogue', route(async (req, res) => {
   const [products, settings, bestSellers] = await Promise.all([
     getProducts({ publishedOnly: true }), getBrandSettings({ strict: true }), readBestsellers().catch(() => [])
   ]);
-  const { momoNumber, momoAccountName, settingsRevision, ...publicSettings } = settings;
+  const { momoNumber, momoAccountName, momoPaymentInstructions, settingsRevision, ...publicSettings } = settings;
   res.json({ products: products.map(product => publicProduct(product)), settings: publicSettings, bestSellers });
 }));
 

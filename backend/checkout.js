@@ -100,7 +100,9 @@ function parseOrder(body) {
 }
 
 function buildQuote(quantities, products, settings) {
-  const { momoNumber, momoAccountName, whatsappNumber, pickupLocation, campusDeliveryFee, customerEmailRequired } = settings;
+  const {
+    momoNumber, momoAccountName, momoPaymentInstructions, whatsappNumber, pickupLocation, campusDeliveryFee, customerEmailRequired
+  } = settings;
   const deliveryFee = toPesewas(campusDeliveryFee);
   if (!toGhanaPhone(momoNumber) || !cleanText(momoAccountName) || !toE164(whatsappNumber) ||
       !cleanText(pickupLocation) || !Number.isSafeInteger(deliveryFee) || deliveryFee < 0) {
@@ -139,7 +141,7 @@ function buildQuote(quantities, products, settings) {
     campusDeliveryFee: deliveryFee / 100,
     customerEmailRequired
   };
-  return { ...quote, campusDestinations, quoteKey: hash(quote) };
+  return { ...quote, momoPaymentInstructions: momoPaymentInstructions || '', campusDestinations, quoteKey: hash(quote) };
 }
 
 function buildWhatsAppMessage(order) {

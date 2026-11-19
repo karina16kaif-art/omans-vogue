@@ -234,6 +234,9 @@ const CheckoutModal = ({ isOpen, onClose, cartItems, receipt, onOrderSaved }) =>
                   <div className="space-y-3">
                     <h3 className={`flex items-center gap-2 ${headingClass}`}><Wallet size={16} /> Mobile Money</h3>
                     <p className="text-sm text-luxury-champagne">Open your MoMo app and send <strong className="text-white">{currency(total)}</strong> to the account below. Then enter the transaction reference from your MoMo receipt.</p>
+                    {quote.momoPaymentInstructions && (
+                      <p className="whitespace-pre-wrap break-words text-sm text-luxury-champagne">{quote.momoPaymentInstructions}</p>
+                    )}
                     <dl className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 border border-luxury-gold/25 text-sm">
                       <div><dt className="text-luxury-champagne">MoMo number</dt><dd className="font-semibold text-white">{quote.momoNumber}</dd></div>
                       <div><dt className="text-luxury-champagne">Account name</dt><dd className="font-semibold text-white break-words">{quote.momoAccountName}</dd></div>
