@@ -1,13 +1,22 @@
 import React from 'react';
 import { X, Plus, Minus, Trash2, ShieldCheck } from 'lucide-react';
-import { getAssetUrl, getWebPAssetUrl } from '../lib/api';
-import { cartKey } from '../lib/catalogue';
+import StoreImage from './StoreImage';
+import { cartKey, optionAvailable, optionPrice } from '../lib/catalogue';
 
-const CartDrawer = ({ isOpen, onClose, cartItems, onUpdateQuantity, onRemoveItem, onCheckout, onResumeOrder }) => {
+const CartDrawer = ({ isOpen, onClose, cartItems, currentProducts, onUpdateQuantity, onRemoveItem, onCheckout, onResumeOrder }) => {
   if (!isOpen) return null;
 
-  // Compute sum totals
-  const subtotal = cartItems.reduce((acc, item) => acc + (item.price * item.quantity), 0);
+  const byId = new Map((currentProducts || []).map(product => [String(product.id), product]));
+  const lines = cartItems.map(item => {
+    const product = byId.get(String(item.id));
+    const option = item.variantId == null
+      ? (product?.variants?.length ? null : product)
+      : product?.variants?.find(variant => variant.id === item.variantId);
+    const available = Boolean(product && option && optionAvailable(product, option));
+    return { ...item, available, price: available ? optionPrice(option) : null };
+  });
+  const canCheckout = currentProducts && lines.every(item => item.available);
+  const subtotal = lines.reduce((sum, item) => sum + (item.price ?? 0) * item.quantity, 0);
 
   return (
     <div className="fixed inset-0 z-50 overflow-hidden">
@@ -31,6 +40,7 @@ const CartDrawer = ({ isOpen, onClose, cartItems, onUpdateQuantity, onRemoveItem
             </div>
             <button 
               onClick={onClose}
+              aria-label="Close cart"
               className="p-2 border border-luxury-rosegold/10 text-luxury-champagne hover:text-white hover:border-luxury-rosegold/30 rounded-full transition-all"
             >
               <X size={15} />
@@ -63,8 +73,7 @@ const CartDrawer = ({ isOpen, onClose, cartItems, onUpdateQuantity, onRemoveItem
                 )}
               </div>
             ) : (
-              cartItems.map((item) => {
-                const itemWebPUrl = getWebPAssetUrl(item.image);
+              lines.map((item) => {
 
                 return (
                   <div
@@ -73,16 +82,8 @@ const CartDrawer = ({ isOpen, onClose, cartItems, onUpdateQuantity, onRemoveItem
                   >
                     {/* Thumbnail */}
                     <div className="w-20 h-20 bg-luxury-black border border-luxury-rosegold/10 overflow-hidden flex-shrink-0 relative">
-                      <picture className="block w-full h-full">
-                        {itemWebPUrl && <source srcSet={itemWebPUrl} type="image/webp" />}
-                        <img
-                          src={getAssetUrl(item.image)}
-                          alt={item.name}
-                          className="w-full h-full object-cover object-center group-hover:scale-105 transition-transform duration-300"
-                          loading="lazy"
-                          decoding="async"
-                        />
-                      </picture>
+                      <StoreImage image={item.image} widths={[160, 240]} sizes="80px" alt={item.name}
+                        className="w-full h-full object-cover object-center" />
                     </div>
 
                     {/* Info details */}
@@ -94,6 +95,7 @@ const CartDrawer = ({ isOpen, onClose, cartItems, onUpdateQuantity, onRemoveItem
                           </h4>
                           <button
                             onClick={() => onRemoveItem(cartKey(item))}
+                            aria-label={`Remove ${item.name} from cart`}
                             className="text-luxury-champagne/40 hover:text-luxury-rosegold transition-colors"
                           >
                             <Trash2 size={12} />
@@ -109,6 +111,7 @@ const CartDrawer = ({ isOpen, onClose, cartItems, onUpdateQuantity, onRemoveItem
                         <div className="flex items-center border border-luxury-rosegold/15 bg-luxury-black/50">
                           <button
                             onClick={() => onUpdateQuantity(cartKey(item), item.quantity - 1)}
+                            aria-label={`Decrease quantity of ${item.name}`}
                             className="px-2 py-1 text-luxury-champagne/60 hover:text-white transition-colors"
                           >
                             <Minus size={10} />
@@ -116,7 +119,7 @@ const CartDrawer = ({ isOpen, onClose, cartItems, onUpdateQuantity, onRemoveItem
                           <span className="px-2 text-[10px] font-bold text-white font-mono">{item.quantity}</span>
                           <button
                             onClick={() => onUpdateQuantity(cartKey(item), item.quantity + 1)}
-                            disabled={item.quantity >= Math.min(item.stockQuantity ?? 99, 99)}
+                            disabled={!item.available || item.quantity >= Math.min(item.stockQuantity ?? 99, 99)}
                             aria-label={`Increase quantity of ${item.name}`}
                             className="px-2 py-1 text-luxury-champagne/60 hover:text-white transition-colors"
                           >
@@ -124,7 +127,7 @@ const CartDrawer = ({ isOpen, onClose, cartItems, onUpdateQuantity, onRemoveItem
                           </button>
                         </div>
                         {/* Price subtotal */}
-                        <span className="font-serif text-xs font-bold text-luxury-gold">GH₵{(item.price * item.quantity).toFixed(2)}</span>
+                        <span className="font-serif text-xs font-bold text-luxury-gold">{item.price == null ? (currentProducts ? 'Unavailable' : 'Price unavailable') : `GH₵${(item.price * item.quantity).toFixed(2)}`}</span>
                       </div>
                     </div>
                   </div>
@@ -140,16 +143,18 @@ const CartDrawer = ({ isOpen, onClose, cartItems, onUpdateQuantity, onRemoveItem
               <div className="space-y-2">
                 <div className="flex justify-between text-xs text-luxury-champagne/60 uppercase tracking-widest font-light">
                   <span>Cart subtotal</span>
-                  <span className="font-serif text-lg font-black text-luxury-gold">GH₵{subtotal.toFixed(2)}</span>
+                  <span className="font-serif text-lg font-black text-luxury-gold">{canCheckout ? `GH₵${subtotal.toFixed(2)}` : '—'}</span>
                 </div>
                 <p className="text-sm text-luxury-champagne/75">Pickup and campus delivery are selected at checkout.</p>
               </div>
 
+              {!canCheckout && <p className="text-sm">{currentProducts ? 'Remove unavailable items before checkout.' : 'Current prices and availability are temporarily unavailable.'}</p>}
               {/* Checkout buttons */}
               <div className="space-y-3">
                 <button
                   onClick={onCheckout}
-                  className="w-full py-4 bg-white text-luxury-black text-xs uppercase tracking-widest font-bold flex items-center justify-center gap-2 hover:bg-luxury-gold hover:shadow-lg transition-all duration-300 transform active:scale-95"
+                  disabled={!canCheckout}
+                  className="w-full py-4 bg-white text-luxury-black text-xs uppercase tracking-widest font-bold flex items-center justify-center gap-2 hover:bg-luxury-gold hover:shadow-lg transition-all duration-300 transform active:scale-95 disabled:opacity-50"
                 >
                   <ShieldCheck size={13} />
                   Secure Checkout

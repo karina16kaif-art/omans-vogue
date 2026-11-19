@@ -1,4 +1,4 @@
--- After both migrations, run as a database administrator on the target project.
+-- After all three migrations, run as a database administrator on the target project.
 -- Returns aggregate counts and permissions without exposing customer records or credentials.
 with permissions as (
   select r.rolname as role_name, t.relname as table_name, t.relrowsecurity as rls_enabled,
@@ -28,6 +28,14 @@ select jsonb_build_object(
     where archived_at is null and stock_quantity is null and coalesce(jsonb_array_length(variants), 0) = 0),
   'fee_mismatches', (select count(*) from public.brand_settings where delivery_fee is distinct from campus_delivery_fee),
   'settings_row_present', exists (select 1 from public.brand_settings where id = 1),
+  'settings_revision_ready', exists (select 1 from public.brand_settings where id = 1 and settings_revision is not null),
+  'published_product_count', (select count(*) from public.products where archived_at is null and published),
+  'publication_guard_ready', exists (
+    select 1 from pg_trigger where tgrelid = 'public.orders'::regclass
+      and tgname = 'omans_assert_published_order' and tgenabled in ('O', 'A')
+  ) and has_function_privilege('service_role', 'public.omans_assert_published_order()', 'EXECUTE')
+    and not has_function_privilege('anon', 'public.omans_assert_published_order()', 'EXECUTE')
+    and not has_function_privilege('authenticated', 'public.omans_assert_published_order()', 'EXECUTE'),
   'momo_configured', exists (select 1 from public.brand_settings
     where id = 1 and nullif(btrim(momo_number), '') is not null and nullif(btrim(momo_account_name), '') is not null),
   'momo_reference_index_ready', exists (

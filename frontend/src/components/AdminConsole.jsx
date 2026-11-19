@@ -30,7 +30,7 @@ const EMPTY_ANALYTICS = {
 const currency = (value) => `GH₵  ${Number(value || 0).toFixed(2)}`;
 
 const AdminConsole = (props) => {
-  const { products, token, onLogout, brandSettings, onBrandSettingsUpdated, onBrandSettingsRefresh, onAdminTokenUpdated } = props;
+  const { token, onLogout, brandSettings, onBrandSettingsUpdated, onBrandSettingsRefresh, onAdminTokenUpdated, adminSettingsState } = props;
   const [activeTab, setActiveTab] = useState('products');
   const [orders, setOrders] = useState([]);
   const [analytics, setAnalytics] = useState(EMPTY_ANALYTICS);
@@ -57,20 +57,23 @@ const AdminConsole = (props) => {
     if (filters.period !== 'all') params.set('period', filters.period);
     if (filters.paymentStatus !== 'All') params.set('paymentStatus', filters.paymentStatus);
     if (filters.orderStatus !== 'All') params.set('orderStatus', filters.orderStatus);
+    params.set('includeAnalytics', 'true');
 
     const options = { headers: authHeaders, signal: request.signal };
-    const [list, metrics] = await Promise.allSettled([
-      api.get('/api/orders', { ...options, params }),
-      api.get('/api/analytics', options)
-    ]);
-    if (request.signal.aborted) return;
-
-    if (list.status === 'fulfilled') setOrders(list.value.data);
-    if (metrics.status === 'fulfilled') setAnalytics({ ...EMPTY_ANALYTICS, ...metrics.value.data });
-    if (list.status === 'rejected' || metrics.status === 'rejected') {
-      setOrdersError('Some order or analytics data could not be loaded. Use Refresh to try again.');
+    try {
+      const { data } = await api.get('/api/orders', { ...options, params });
+      if (request.signal.aborted) return;
+      setOrders(data.orders);
+      setAnalytics({ ...EMPTY_ANALYTICS, ...data.analytics });
+    } catch {
+      if (!request.signal.aborted) {
+        setOrders([]);
+        setAnalytics(EMPTY_ANALYTICS);
+        setOrdersError('Orders could not be loaded. Use Refresh to try again.');
+      }
+    } finally {
+      if (!request.signal.aborted) setOrdersLoading(false);
     }
-    setOrdersLoading(false);
   }, [authHeaders, filters, token]);
 
   useEffect(() => {
@@ -123,7 +126,7 @@ const AdminConsole = (props) => {
     ['Delivered Orders', analytics?.deliveredOrders || 0, Truck],
     ['Cancelled Orders', analytics?.cancelledOrders || 0, Package],
     ['Best-Selling Perfume', analytics?.bestSellingPerfume?.name || 'No sales yet', BarChart3],
-    ['Out of Stock Count', analytics?.lowStockCount ?? products.filter(product => !product.inStock).length, Package]
+    ['Out of Stock Count', analytics?.lowStockCount ?? 0, Package]
   ];
 
   return (
@@ -161,13 +164,17 @@ const AdminConsole = (props) => {
       {activeTab === 'products' ? (
         <AdminProducts {...props} />
       ) : activeTab === 'brand' ? (
-        <BrandSettings
+        adminSettingsState === 'ready' ? <BrandSettings
           token={token}
           brandSettings={brandSettings}
           onBrandSettingsUpdated={onBrandSettingsUpdated}
           onBrandSettingsRefresh={onBrandSettingsRefresh}
           onAdminTokenUpdated={onAdminTokenUpdated}
-        />
+        /> : <p className="max-w-7xl mx-auto px-6 py-12 text-sm" role="status">
+          {adminSettingsState === 'error' ? <>
+            Store settings could not be loaded. <button type="button" className="underline" onClick={() => onBrandSettingsRefresh()}>Retry</button>
+          </> : 'Loading store settings…'}
+        </p>
       ) : (
         <div className="max-w-7xl mx-auto px-6 md:px-12 py-12 space-y-10">
           <div>

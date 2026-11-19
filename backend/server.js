@@ -4,11 +4,12 @@ const cors = require('cors');
 const bodyParser = require('body-parser');
 const fs = require('fs');
 const path = require('path');
+const { tmpdir } = require('os');
 const multer = require('multer');
 const sharp = require('sharp');
 const crypto = require('crypto');
 const createAdminAuth = require('./admin-auth');
-const { productPayload, publicProduct, productAvailable, normalizeStorefront, fallbackImage } = require('./catalogue');
+const { productPayload, publicProduct, productAvailable, normalizeStorefront, fallbackImage, collectionIds } = require('./catalogue');
 const {
   campus, cleanText, toE164, toGhanaPhone, toPesewas, formatCurrency,
   hash, checkoutError, parseItems, parseOrder, buildQuote, buildWhatsAppMessage
@@ -86,6 +87,10 @@ app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
 app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
+app.use('/api', (req, res, next) => {
+  res.set('Cache-Control', 'no-store');
+  next();
+});
 
 // Paths
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
@@ -230,6 +235,7 @@ const mapProductFromDb = (row) => {
     sizeMl: optionalNumeric(row.size_ml), stockQuantity: optionalNumeric(row.stock_quantity),
     salePrice: optionalNumeric(row.sale_price), variants: Array.isArray(row.variants) ? row.variants : [],
     featured: row.featured === true, newArrival: row.new_arrival === true,
+    published: row.published !== false, bestsellerFeatured: row.bestseller_featured === true,
     createdAt: row.created_at, catalogVersion: String(row.catalog_version ?? 0), archivedAt: row.archived_at
   };
 };
@@ -241,7 +247,8 @@ const mapProductToDb = (product) => ({
   image: product.image, image_url: product.image, images: product.images,
   brand: product.brand, collections: product.collections, size_ml: product.sizeMl,
   stock: product.stockQuantity, stock_quantity: product.stockQuantity, sale_price: product.salePrice, variants: product.variants,
-  featured: product.featured, new_arrival: product.newArrival, updated_at: new Date().toISOString()
+  featured: product.featured, new_arrival: product.newArrival,
+  published: product.published, bestseller_featured: product.bestsellerFeatured, updated_at: new Date().toISOString()
 });
 
 const localProduct = (product) => ({
@@ -318,7 +325,8 @@ const mapSettingsFromDb = (row) => Object.fromEntries(
     momoAccountName: row.momo_account_name,
     pickupLocation: row.pickup_location,
     campusDeliveryFee: optionalNumeric(row.campus_delivery_fee ?? row.delivery_fee),
-    storefront: row.storefront
+    storefront: row.storefront,
+    settingsRevision: row.settings_revision
   }).filter(([, value]) => value !== undefined && value !== null && value !== '')
 );
 
@@ -336,6 +344,7 @@ const mapSettingsToDb = (settings) => ({
   pickup_location: settings.pickupLocation,
   delivery_fee: settings.campusDeliveryFee,
   storefront: settings.storefront,
+  settings_revision: crypto.randomUUID(),
   updated_at: new Date().toISOString()
 });
 
@@ -405,66 +414,79 @@ app.use(express.static(path.join(__dirname, 'public'), {
 }));
 
 // Configure Multer for local product image uploads
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, UPLOADS_DIR);
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    const ext = path.extname(file.originalname).toLowerCase();
-    cb(null, 'product-' + uniqueSuffix + ext);
-  }
-});
-
-const upload = multer({
-  storage,
-  limits: { fileSize: 8 * 1024 * 1024 },
-  fileFilter: (req, file, cb) => {
-    if (!file.mimetype || !file.mimetype.startsWith('image/')) {
-      return cb(new Error('Only image uploads are allowed'));
-    }
-    cb(null, true);
-  }
-});
-
-const brandUpload = multer({
+const supportedImageTypes = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif', 'image/heic', 'image/heif', 'image/tiff']);
+const imageUpload = (prefix, megabytes) => multer({
   storage: multer.diskStorage({
-    destination: (req, file, cb) => {
-      cb(null, BRAND_UPLOADS_DIR);
-    },
-    filename: (req, file, cb) => {
-      const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-      const ext = path.extname(file.originalname).toLowerCase();
-      cb(null, 'hero-' + uniqueSuffix + ext);
-    }
+    destination: tmpdir(),
+    filename: (req, file, cb) => cb(null, `${prefix}-${crypto.randomUUID()}`)
   }),
-  limits: { fileSize: 10 * 1024 * 1024 },
+  limits: { fileSize: megabytes * 1024 * 1024, files: 1 },
   fileFilter: (req, file, cb) => {
-    if (!file.mimetype || !file.mimetype.startsWith('image/')) {
-      return cb(new Error('Only image uploads are allowed'));
-    }
+    if (!supportedImageTypes.has(file.mimetype)) return cb(new Error('Choose a supported product photo.'));
     cb(null, true);
   }
 });
+const upload = imageUpload('product', 8);
+const brandUpload = imageUpload('hero', 10);
+
+const optimizeUpload = async (file, output, width, height, quality) => {
+  try {
+    await sharp(file.path, { limitInputPixels: 40_000_000 }).rotate()
+      .resize({ width, height, fit: 'inside', withoutEnlargement: true })
+      .webp({ quality, effort: 4 })
+      .toFile(output);
+  } catch {
+    fs.unlink(output, () => {});
+    throw checkoutError(400, 'Choose a valid, supported image under 40 megapixels.');
+  } finally {
+    fs.unlink(file.path, () => {});
+  }
+};
 
 const readLocalProducts = () => {
   const products = readJsonFile(DATA_FILE, []);
   return Array.isArray(products) ? products.map(localProduct) : [];
 };
 
-const getProducts = async () => {
-  if (!isSupabaseConfigured()) return readLocalProducts().filter(product => !product.archivedAt);
+const getProducts = async ({ publishedOnly = false } = {}) => {
+  if (!isSupabaseConfigured()) return readLocalProducts().filter(product => !product.archivedAt && (!publishedOnly || product.published !== false));
 
   const products = [];
   let cursor;
   do {
     const filter = cursor ? `&id=gt.${cursor}` : '';
-    const rows = await supabaseRequest(`products?${PRODUCT_PROJECTION}&archived_at=is.null&order=id.asc&limit=250${filter}`);
+    const visibility = publishedOnly ? '&published=eq.true' : '';
+    const rows = await supabaseRequest(`products?${PRODUCT_PROJECTION}&archived_at=is.null&order=id.asc&limit=250${filter}${visibility}`);
     if (!rows.length) break;
     products.push(...rows.map(mapProductFromDb));
     cursor = rows[rows.length - 1].product_id_text;
   } while (true);
   return products;
+};
+
+const readAdminProductPage = async (query) => {
+  const limit = Number(query.limit);
+  const offset = Number(query.offset ?? 0);
+  if (!Number.isInteger(limit) || limit < 1 || limit > 48 || !Number.isSafeInteger(offset) || offset < 0 || offset > 1000000) {
+    throw checkoutError(400, 'Invalid product page.');
+  }
+  const search = cleanText(query.search).slice(0, 80);
+  let rows;
+  if (isSupabaseConfigured()) {
+    const params = new URLSearchParams({ archived_at: 'is.null', order: 'id.asc', offset, limit: limit + 1 });
+    if (search) {
+      const pattern = search.replace(/[\\%_*]/g, '\\$&').replace(/[\\"]/g, '\\$&');
+      const value = `"%${pattern}%"`;
+      params.set('or', `(name.ilike.${value},brand.ilike.${value})`);
+    }
+    rows = (await supabaseRequest(`products?${PRODUCT_PROJECTION}&${params}`)).map(mapProductFromDb);
+  } else {
+    const term = search.toLowerCase();
+    rows = readLocalProducts().filter(product => !product.archivedAt &&
+      [product.name, product.brand].some(value => String(value ?? '').toLowerCase().includes(term)))
+      .slice(offset, offset + limit + 1);
+  }
+  return { products: rows.slice(0, limit).map(product => publicProduct(product, true)), hasMore: rows.length > limit };
 };
 
 const normalizeCategory = (category) => {
@@ -510,15 +532,17 @@ const readSupabaseBrandSettings = async () => {
   return rows[0] ? mapSettingsFromDb(rows[0]) : null;
 };
 
-const getBrandSettings = async () => {
+const getBrandSettings = async ({ strict = false } = {}) => {
   if (isSupabaseConfigured()) {
     try {
       const settings = await readSupabaseBrandSettings();
       if (settings) return { ...DEFAULT_BRAND_SETTINGS, ...settings };
 
+      if (strict) throw new Error('The storefront settings row is missing.');
       await saveBrandSettings(DEFAULT_BRAND_SETTINGS);
       return { ...DEFAULT_BRAND_SETTINGS };
     } catch (error) {
+      if (strict) throw error;
       logSupabaseError('Supabase settings read failed, using JSON fallback:', error);
     }
   }
@@ -527,16 +551,20 @@ const getBrandSettings = async () => {
   return { ...DEFAULT_BRAND_SETTINGS, ...(parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}) };
 };
 
-const saveBrandSettings = async (settings) => {
+const saveBrandSettings = async (settings, revision) => {
   if (isSupabaseConfigured()) {
     try {
-      await supabaseRequest('brand_settings?on_conflict=id', {
-        method: 'POST',
-        headers: { Prefer: 'resolution=merge-duplicates' },
-        body: JSON.stringify(mapSettingsToDb(settings))
+      const values = mapSettingsToDb(settings);
+      const filter = new URLSearchParams({ id: 'eq.1', settings_revision: `eq.${revision}` });
+      const rows = await supabaseRequest(revision ? `brand_settings?${filter}` : 'brand_settings?on_conflict=id', {
+        method: revision ? 'PATCH' : 'POST',
+        headers: { Prefer: revision ? 'return=representation' : 'resolution=merge-duplicates' },
+        body: JSON.stringify(values)
       });
+      if (revision && !rows?.length) throw checkoutError(409, 'Store settings changed. Refresh them before saving again.');
       return true;
     } catch (error) {
+      if (error.checkoutStatus) throw error;
       logSupabaseError('Supabase settings save failed:', error);
       return false;
     }
@@ -764,19 +792,23 @@ app.get('/health', (req, res) => {
 // API: Public brand settings
 app.get(['/api/brand-settings', '/api/settings'], async (req, res) => {
   res.set('Cache-Control', 'no-store');
-  const { momoNumber, momoAccountName, ...publicSettings } = await getBrandSettings();
+  const { momoNumber, momoAccountName, settingsRevision, ...publicSettings } = await getBrandSettings();
   res.json(publicSettings);
 });
 
 app.get('/api/admin/settings', authenticateAdmin, route(async (req, res) => {
-  res.json(await getBrandSettings());
+  res.json(await getBrandSettings({ strict: true }));
 }));
 
 // API: Update brand settings
 const updateBrandSettings = route(async (req, res) => {
-  const stored = req.body?.storefront === undefined ? undefined : (await getBrandSettings()).storefront;
+  const revision = req.body?.settingsRevision;
+  if (revision != null && (typeof revision !== 'string' || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(revision))) {
+    throw checkoutError(400, 'Invalid settings revision.');
+  }
+  const stored = req.body?.storefront === undefined ? undefined : (await getBrandSettings({ strict: true })).storefront;
   const updates = normalizeBrandPayload(req.body || {}, stored);
-  if (!await saveBrandSettings(updates)) {
+  if (!await saveBrandSettings(updates, revision)) {
     return res.status(500).json({ error: 'Failed to save brand settings' });
   }
   res.json(await getBrandSettings());
@@ -818,26 +850,12 @@ app.post(['/api/brand-settings/hero', '/api/settings/hero'], authenticateAdmin, 
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
-    let savedFilename = req.file.filename;
-    let uploadPath = req.file.path;
-
+    const savedFilename = `${req.file.filename}.webp`;
+    const uploadPath = path.join(BRAND_UPLOADS_DIR, savedFilename);
     try {
-      const parsed = path.parse(req.file.filename);
-      const webpFilename = `${parsed.name}.webp`;
-      const webpPath = path.join(BRAND_UPLOADS_DIR, webpFilename);
-
-      await sharp(req.file.path)
-        .rotate()
-        .resize({ width: 2200, height: 1400, fit: 'inside', withoutEnlargement: true })
-        .webp({ quality: 84, effort: 5 })
-        .toFile(webpPath);
-
-      fs.unlink(req.file.path, () => {});
-      savedFilename = webpFilename;
-      uploadPath = webpPath;
-    } catch (conversionError) {
-      console.warn('[Oman’s Vogue Server] Hero image optimization failed, using original upload.', conversionError);
-      uploadPath = req.file.path;
+      await optimizeUpload(req.file, uploadPath, 2200, 1400, 84);
+    } catch (error) {
+      return res.status(400).json({ error: error.message });
     }
 
     let imageUrl = '';
@@ -846,11 +864,12 @@ app.post(['/api/brand-settings/hero', '/api/settings/hero'], authenticateAdmin, 
       const cloudinaryUrl = await uploadImageToCloudinary({
         filePath: uploadPath,
         folder: 'omans-vogue/brand',
-        mimeType: savedFilename.endsWith('.webp') ? 'image/webp' : req.file.mimetype
+        mimeType: 'image/webp'
       });
       imageUrl = cloudinaryUrl;
       fs.unlink(uploadPath, () => {});
     } catch (cloudinaryError) {
+      fs.unlink(uploadPath, () => {});
       console.error('[Oman’s Vogue Server] Cloudinary hero upload failed:', {
         message: cloudinaryError.message,
         cloudNameConfigured: Boolean(CLOUDINARY_CLOUD_NAME),
@@ -865,7 +884,8 @@ app.post(['/api/brand-settings/hero', '/api/settings/hero'], authenticateAdmin, 
     }
 
     try {
-      if (!await saveBrandSettings({ heroBackgroundImage: imageUrl, heroBackgroundWebp: imageUrl })) {
+      const currentSettings = await getBrandSettings({ strict: true });
+      if (!await saveBrandSettings({ heroBackgroundImage: imageUrl, heroBackgroundWebp: imageUrl }, currentSettings.settingsRevision)) {
         return res.status(424).json({
           error: 'Hero image uploaded, but Supabase settings save failed',
           message: 'Cloudinary upload succeeded, but brand_settings could not be updated. Confirm the brand_settings table exists and service role key is valid.',
@@ -876,6 +896,7 @@ app.post(['/api/brand-settings/hero', '/api/settings/hero'], authenticateAdmin, 
 
       return res.json({ imageUrl, settings: await getBrandSettings() });
     } catch (settingsError) {
+      if (settingsError.checkoutStatus) return res.status(settingsError.checkoutStatus).json({ error: settingsError.message });
       console.error('[Oman’s Vogue Server] Hero settings save crashed:', settingsError.details || settingsError.message, settingsError);
       return res.status(424).json({
         ...supabaseSetupErrorResponse(settingsError),
@@ -895,19 +916,30 @@ app.get('/api/auth/verify', authenticateAdmin, (req, res) => {
 
 // Public catalogue and confirmed sales rankings.
 app.get('/api/products', route(async (req, res) => {
-  res.set('Cache-Control', 'no-store');
-  res.json((await getProducts()).map(product => publicProduct(product)));
+  res.json((await getProducts({ publishedOnly: true })).map(product => publicProduct(product)));
 }));
 
 app.get('/api/admin/products', authenticateAdmin, route(async (req, res) => {
+  if (req.query.limit !== undefined) return res.json(await readAdminProductPage(req.query));
   res.json((await getProducts()).map(product => publicProduct(product, true)));
 }));
 
-app.get('/api/storefront/best-sellers', route(async (req, res) => {
-  res.set('Cache-Control', 'no-store');
-  if (!isSupabaseConfigured()) return res.json([]);
+const readBestsellers = async () => {
+  if (!isSupabaseConfigured()) return [];
   const ranks = await supabaseRequest('rpc/omans_confirmed_bestsellers');
-  res.json(ranks.map(row => ({ productId: row.product_id, units: Number(row.units) })));
+  return ranks.map(row => ({ productId: row.product_id, units: Number(row.units) }));
+};
+
+app.get('/api/storefront/best-sellers', route(async (req, res) => {
+  res.json(await readBestsellers());
+}));
+
+app.get('/api/storefront/catalogue', route(async (req, res) => {
+  const [products, settings, bestSellers] = await Promise.all([
+    getProducts({ publishedOnly: true }), getBrandSettings({ strict: true }), readBestsellers().catch(() => [])
+  ]);
+  const { momoNumber, momoAccountName, settingsRevision, ...publicSettings } = settings;
+  res.json({ products: products.map(product => publicProduct(product)), settings: publicSettings, bestSellers });
 }));
 
 const saveLocalCatalogue = (products) => {
@@ -915,7 +947,9 @@ const saveLocalCatalogue = (products) => {
 };
 
 app.post('/api/products', authenticateAdmin, route(async (req, res) => {
-  const product = productPayload(req.body || {});
+  const body = req.body || {};
+  const allowed = body.collections === undefined ? undefined : collectionIds((await getBrandSettings({ strict: true })).storefront);
+  const product = productPayload(body, {}, allowed);
   if (isSupabaseConfigured()) {
     const [row] = await supabaseRequest(`products?${PRODUCT_PROJECTION}`, {
       method: 'POST',
@@ -936,6 +970,7 @@ const updateProduct = async (id, body, archive = false) => {
   const productId = parseProductId(id);
   if (!productId) return null;
   const stamp = new Date().toISOString();
+  const allowed = body.collections === undefined ? undefined : collectionIds((await getBrandSettings({ strict: true })).storefront);
   const checkVersion = (current) => {
     if (body.catalogVersion !== undefined && String(body.catalogVersion) !== current.catalogVersion) {
       throw checkoutError(409, 'This product changed. Reopen it with the latest stock and try again.');
@@ -951,7 +986,7 @@ const updateProduct = async (id, body, archive = false) => {
     let values = { archived_at: stamp, updated_at: stamp };
     if (!archive) {
       const previous = mapProductToDb(current);
-      const next = mapProductToDb(productPayload(body, current));
+      const next = mapProductToDb(productPayload(body, current, allowed));
       values = Object.fromEntries(Object.entries(next).filter(([key, value]) =>
         key === 'updated_at' || JSON.stringify(value) !== JSON.stringify(previous[key])
       ));
@@ -970,7 +1005,7 @@ const updateProduct = async (id, body, archive = false) => {
   if (index < 0) return null;
   const current = products[index];
   checkVersion(current);
-  const updated = archive ? { ...current, archivedAt: stamp } : productPayload(body, current);
+  const updated = archive ? { ...current, archivedAt: stamp } : productPayload(body, current, allowed);
   updated.catalogVersion = String(BigInt(current.catalogVersion) + 1n);
   products[index] = updated;
   saveLocalCatalogue(products);
@@ -989,6 +1024,9 @@ app.delete('/api/products/:id', authenticateAdmin, route(async (req, res) => {
 
 // API: Handle image upload
 app.post('/api/upload', authenticateAdmin, (req, res) => {
+  if (isProduction && !isCloudinaryConfigured()) {
+    return res.status(503).json({ error: 'Image uploads are temporarily unavailable.' });
+  }
   upload.single('image')(req, res, async (err) => {
     if (err) {
       return res.status(400).json({ error: err.message || 'Image upload failed' });
@@ -997,22 +1035,13 @@ app.post('/api/upload', authenticateAdmin, (req, res) => {
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
-    const savedFilename = `${path.parse(req.file.filename).name}-optimized.webp`;
+    const savedFilename = `${req.file.filename}.webp`;
     const uploadPath = path.join(UPLOADS_DIR, savedFilename);
 
     try {
-
-      await sharp(req.file.path)
-        .rotate()
-        .resize({ width: 1400, height: 1400, fit: 'inside', withoutEnlargement: true })
-        .webp({ quality: 82, effort: 5 })
-        .toFile(uploadPath);
-
-      fs.unlink(req.file.path, () => {});
-    } catch {
-      fs.unlink(req.file.path, () => {});
-      fs.unlink(uploadPath, () => {});
-      return res.status(400).json({ error: 'Choose a valid image file.' });
+      await optimizeUpload(req.file, uploadPath, 1400, 1400, 82);
+    } catch (error) {
+      return res.status(400).json({ error: error.message });
     }
 
     let fileUrl = `/uploads/products/${savedFilename}`;
@@ -1051,7 +1080,7 @@ const quoteCart = async (items) => {
   const productIds = [...new Set(items.map(item => item.productId))].join(',');
   const [settings, rows, customerEmailRequired] = await Promise.all([
     readSupabaseBrandSettings(),
-    supabaseRequest(`products?${PRODUCT_PROJECTION}&archived_at=is.null&id=in.(${productIds})`),
+    supabaseRequest(`products?${PRODUCT_PROJECTION}&archived_at=is.null&published=eq.true&id=in.(${productIds})`),
     supabaseRequest('rpc/omans_checkout_requires_email')
   ]);
   if (typeof customerEmailRequired !== 'boolean') throw new Error('Checkout email requirement is unavailable');
@@ -1147,11 +1176,8 @@ app.post('/api/orders', route(async (req, res) => {
   return res.status(201).json(checkoutReceipt(inserted, requestHash));
 }));
 
-// API: Admin get orders with filters
-app.get('/api/orders', authenticateAdmin, route(async (req, res) => {
-  const { period, paymentStatus, orderStatus: status } = req.query;
+const filterOrders = (orders, { period, paymentStatus, orderStatus: status }) => {
   const { startOfToday, startOfMonth } = dateRanges();
-  let orders = await getOrders();
 
   if (period === 'today') orders = orders.filter(order => new Date(order.createdAt) >= startOfToday);
   if (period === 'month') orders = orders.filter(order => new Date(order.createdAt) >= startOfMonth);
@@ -1165,7 +1191,14 @@ app.get('/api/orders', authenticateAdmin, route(async (req, res) => {
   if (status && status !== 'All') {
     orders = orders.filter(order => orderStatus(order.orderStatus) === orderStatus(status));
   }
-  res.json(orders);
+  return orders;
+};
+
+// The order list and analytics can share the same fresh order snapshot.
+app.get('/api/orders', authenticateAdmin, route(async (req, res) => {
+  if (req.query.includeAnalytics !== 'true') return res.json(filterOrders(await getOrders(), req.query));
+  const [orders, products] = await Promise.all([getOrders(), getProducts()]);
+  res.json({ orders: filterOrders(orders, req.query), analytics: buildOrderAnalytics(orders, products) });
 }));
 
 app.get(['/api/orders/analytics', '/api/analytics'], authenticateAdmin, route(async (req, res) => {

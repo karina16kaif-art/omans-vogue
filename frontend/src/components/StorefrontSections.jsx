@@ -45,21 +45,24 @@ export const ShopByCollection = ({ settings, onSelectCollection }) => {
 
 export const ProductShowcases = ({ products, settings, ranks, onSelectProduct, onCheckout }) => {
   const byProduct = new Map(products.map(product => [String(product.id), product]));
+  const rankedIds = new Set(ranks.map(item => String(item.productId)));
+  const ranked = ranks.map(item => byProduct.get(String(item.productId))).filter(Boolean);
   const groups = [
     ['newArrivals', products.filter(product => product.newArrival).sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))],
-    ['bestSellers', ranks.map(item => byProduct.get(String(item.productId))).filter(Boolean)],
+    ['bestSellers', [...ranked, ...products.filter(product => product.bestsellerFeatured && !rankedIds.has(String(product.id)))]],
     ['featured', products.filter(product => product.featured)],
     ['gifts', products.filter(product => memberships(product, settings).has('gift-sets'))]
   ];
 
   return groups.map(([key, items]) => {
     const content = sectionContent(settings, key);
-    if (!content.visible || !items.length || (key === 'gifts' && settings?.collectionVisibility?.['gift-sets'] === false)) return null;
+    if (!content.visible || !items.length || (key === 'gifts' && !visibleCollections(settings).some(([id]) => id === 'gift-sets'))) return null;
     return (
       <Section key={key} {...content}>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-6">
           {items.slice(0, 4).map(product => (
-            <ProductCard key={product.id} product={product} onSelect={onSelectProduct} onCheckout={onCheckout} />
+            <ProductCard key={product.id} product={product} settings={settings} onSelect={onSelectProduct} onCheckout={onCheckout}
+              storePick={key === 'bestSellers' && !rankedIds.has(String(product.id))} />
           ))}
         </div>
       </Section>

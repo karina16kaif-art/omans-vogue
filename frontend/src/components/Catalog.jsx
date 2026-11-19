@@ -1,50 +1,19 @@
-import React, { useMemo, useState } from 'react';
+import React, { useDeferredValue, useMemo, useState } from 'react';
 import { ShoppingBag, Eye, Sparkles, AlertCircle, Search } from 'lucide-react';
-import { getAssetUrl, getWebPAssetUrl } from '../lib/api';
+import StoreImage from './StoreImage';
 import { collectionLabel, currency, displayOption, memberships, optionAvailable, optionPrice, optionsFor, visibleCollections } from '../lib/catalogue';
 
-export const ProductCard = React.memo(({ product, onSelect, onCheckout }) => {
-  const [tiltStyle, setTiltStyle] = useState({});
-
-  const handleMouseMove = (e) => {
-    if (window.matchMedia('(pointer: coarse)').matches) return;
-    const card = e.currentTarget;
-    const rect = card.getBoundingClientRect();
-    const x = e.clientX - rect.left; // x coordinate inside element
-    const y = e.clientY - rect.top;  // y coordinate inside element
-
-    // Calculate rotation degree based on hover position (max 10 degrees tilt)
-    const rotateX = ((rect.height / 2 - y) / (rect.height / 2)) * 10;
-    const rotateY = -((rect.width / 2 - x) / (rect.width / 2)) * 10;
-
-    setTiltStyle({
-      transform: `perspective(1000px) rotateX(${rotateX}deg) rotateY(${rotateY}deg) scale3d(1.03, 1.03, 1.03)`,
-      transition: 'transform 0.1s ease-out'
-    });
-  };
-
-  const handleMouseLeave = () => {
-    setTiltStyle({
-      transform: 'perspective(1000px) rotateX(0deg) rotateY(0deg) scale3d(1, 1, 1)',
-      transition: 'transform 0.5s ease'
-    });
-  };
-
-  const label = collectionLabel(product);
+export const ProductCard = React.memo(({ product, settings, onSelect, onCheckout, storePick = false }) => {
+  const label = collectionLabel(product, settings);
   const option = displayOption(product);
   const available = optionsFor(product).some(item => optionAvailable(product, item));
-  const productImageUrl = getAssetUrl(product.image);
-  const productWebPUrl = getWebPAssetUrl(product.image);
 
   return (
     <div 
       className="tilt-card-container cursor-pointer select-none"
       onClick={() => onSelect(product)}
-      onMouseMove={handleMouseMove}
-      onMouseLeave={handleMouseLeave}
     >
       <div 
-        style={tiltStyle}
         className={`tilt-card glass-panel group relative flex flex-col h-full overflow-hidden border transition-all duration-500 ${
           available
             ? 'border-luxury-rosegold/10 hover:border-luxury-rosegold/30' 
@@ -54,7 +23,7 @@ export const ProductCard = React.memo(({ product, onSelect, onCheckout }) => {
         {/* Out of Stock Overlay / Badge */}
         {!available && (
           <div className="absolute inset-0 pointer-events-none out-of-stock-overlay z-20 flex flex-col items-center justify-center p-4">
-            <div className="px-4 py-2 border border-luxury-rosegold bg-luxury-black/90 text-luxury-rosegold font-serif text-xs uppercase tracking-widest font-black flex items-center gap-1.5 shadow-lg animate-pulse">
+            <div className="px-4 py-2 border border-luxury-rosegold bg-luxury-black/90 text-luxury-rosegold font-serif text-xs uppercase tracking-widest font-black flex items-center gap-1.5 shadow-lg">
               <AlertCircle size={12} />
               Out of Stock
             </div>
@@ -63,21 +32,13 @@ export const ProductCard = React.memo(({ product, onSelect, onCheckout }) => {
 
         {/* Perfume Image Wrap */}
         <div className="relative aspect-[1/1] overflow-hidden bg-luxury-black">
-          <picture className="block w-full h-full">
-            {productWebPUrl && <source srcSet={productWebPUrl} type="image/webp" />}
-            <img
-              src={productImageUrl}
-              alt={product.name}
-              className="w-full h-full object-cover object-center group-hover:scale-105 transition-transform duration-700 select-none pointer-events-none"
-              loading="lazy"
-              decoding="async"
-              sizes="(min-width: 1024px) 25vw, (min-width: 640px) 50vw, 100vw"
-            />
-          </picture>
+          <StoreImage image={product.image} widths={[240, 400, 640, 800]}
+            sizes="(min-width: 1280px) 275px, (min-width: 1024px) 25vw, 50vw" alt={product.name}
+            className="w-full h-full object-cover object-center group-hover:scale-105 transition-transform duration-500" />
           {/* Sparkle decorative effect */}
           {available && (
             <div className="absolute top-3 right-3 p-1.5 rounded-full bg-luxury-charcoal/80 backdrop-blur-xs border border-luxury-rosegold/20 opacity-0 group-hover:opacity-100 transition-opacity">
-              <Sparkles size={12} className="text-luxury-gold animate-spin-slow" />
+              <Sparkles size={12} className="text-luxury-gold " />
             </div>
           )}
         </div>
@@ -89,6 +50,7 @@ export const ProductCard = React.memo(({ product, onSelect, onCheckout }) => {
             <span className="text-[9px] font-sans tracking-[0.25em] uppercase text-luxury-rosegold font-bold block mb-1">
               {label}
             </span>
+            {storePick && <span className="text-xs text-luxury-rosegold">Store pick</span>}
             {/* Product Name */}
             <h3 className="font-serif text-base tracking-wider text-white group-hover:text-luxury-gold transition-colors duration-300 mb-2 truncate">
               {product.name}
@@ -146,22 +108,30 @@ export const ProductCard = React.memo(({ product, onSelect, onCheckout }) => {
 const controlClass = 'w-full min-w-0 border border-luxury-rosegold/25 bg-luxury-black px-3 py-2.5 text-sm text-white focus:border-luxury-gold focus:outline-none';
 const initialFilters = { query: '', brand: '', size: '', minPrice: '', price: '', stock: '' };
 
-const Catalog = ({ products, settings, collection, onCollectionChange, onSelectProduct, onCheckout }) => {
+const Catalog = ({ products, pending, error, onReload, settings, collection, onCollectionChange, onSelectProduct, onCheckout }) => {
   const [filters, setFilters] = useState(initialFilters);
   const { query, brand, size, minPrice, price, stock } = filters;
+  const deferredQuery = useDeferredValue(query);
+  const selection = JSON.stringify([collection, brand, size, minPrice, price, stock, deferredQuery]);
+  const [visible, setVisible] = useState({ selection, count: 24 });
+  const visibleCount = visible.selection === selection ? visible.count : 24;
   const setFilter = (key, value) => setFilters(previous => ({ ...previous, [key]: value }));
   const enabledCollections = visibleCollections(settings);
 
   const brands = useMemo(() => [...new Set(products.map(product => product.brand).filter(Boolean))].sort(), [products]);
   const sizes = useMemo(() => [...new Set(products.flatMap(product => optionsFor(product).map(option => option.sizeMl)).filter(Boolean))]
     .sort((a, b) => a - b), [products]);
+  const searchIndex = useMemo(() => products.map(product => ({
+    product,
+    groups: memberships(product, settings),
+    searchable: [product.name, product.brand, product.notes, product.description, ...optionsFor(product).map(option => option.label)]
+      .filter(Boolean).join(' ').toLowerCase()
+  })), [products, settings]);
   const filtered = useMemo(() => {
-    const search = query.trim().toLowerCase().split(/\s+/);
-    return products.filter(product => {
-      if (collection && !memberships(product, settings).has(collection)) return false;
+    const search = deferredQuery.trim().toLowerCase().split(/\s+/);
+    return searchIndex.filter(({ product, groups, searchable }) => {
+      if (collection && !groups.has(collection)) return false;
       if (brand && product.brand !== brand) return false;
-      const searchable = [product.name, product.brand, product.notes, product.description, ...optionsFor(product).map(option => option.label)]
-        .filter(Boolean).join(' ').toLowerCase();
       if (!search.every(term => searchable.includes(term))) return false;
       return optionsFor(product).some(option => (
         (!size || Number(option.sizeMl) === Number(size)) &&
@@ -169,8 +139,8 @@ const Catalog = ({ products, settings, collection, onCollectionChange, onSelectP
         (price === '' || optionPrice(option) <= Number(price)) &&
         (!stock || optionAvailable(product, option) === (stock === 'available'))
       ));
-    });
-  }, [products, settings, collection, query, brand, size, minPrice, price, stock]);
+    }).map(({ product }) => product);
+  }, [searchIndex, collection, deferredQuery, brand, size, minPrice, price, stock]);
 
   return (
     <section id="catalog" className="relative max-w-7xl mx-auto px-4 sm:px-6 md:px-12 py-16 sm:py-24 z-10 border-t border-luxury-rosegold/5 scroll-mt-20">
@@ -208,7 +178,7 @@ const Catalog = ({ products, settings, collection, onCollectionChange, onSelectP
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-2 mb-5 text-sm text-luxury-champagne/75">
-        <p aria-live="polite">{filtered.length} {filtered.length === 1 ? 'product' : 'products'}</p>
+        <p aria-live="polite">{pending ? 'Loading fragrances…' : error ? 'Catalogue unavailable' : `${filtered.length} ${filtered.length === 1 ? 'product' : 'products'}`}</p>
         {(collection || Object.values(filters).some(Boolean)) && (
           <button type="button" className="text-luxury-gold underline underline-offset-4" onClick={() => {
             setFilters(initialFilters);
@@ -216,11 +186,14 @@ const Catalog = ({ products, settings, collection, onCollectionChange, onSelectP
           }}>Clear filters</button>
         )}
       </div>
+      {error && <p role="alert" className="mb-4 text-sm">{error} <button type="button" className="underline" onClick={onReload}>Retry</button></p>}
       {filtered.length ? (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-6 md:gap-8">
-          {filtered.map(product => <ProductCard key={product.id} product={product} onSelect={onSelectProduct} onCheckout={onCheckout} />)}
+          {filtered.slice(0, visibleCount).map(product => <ProductCard key={product.id} product={product} settings={settings} onSelect={onSelectProduct} onCheckout={onCheckout} />)}
         </div>
-      ) : <p className="glass-panel py-12 text-center text-luxury-champagne/75">No products match these filters.</p>}
+      ) : !pending && !error && <p className="glass-panel py-12 text-center text-luxury-champagne/75">No products match these filters.</p>}
+      {visibleCount < filtered.length && <button type="button" className="mx-auto mt-6 block border border-luxury-rosegold/25 px-5 py-2.5 text-sm"
+        onClick={() => setVisible({ selection, count: visibleCount + 24 })}>Show more fragrances</button>}
     </section>
   );
 };

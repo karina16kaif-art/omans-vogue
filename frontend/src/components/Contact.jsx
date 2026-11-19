@@ -1,31 +1,27 @@
 import React, { useState } from 'react';
-import { Send, Instagram, Phone, MapPin, Mail, Sparkles, CheckCircle2 } from 'lucide-react';
+import { Send, Instagram, Phone, MapPin, Mail, Sparkles } from 'lucide-react';
 
 const Contact = ({ brandSettings }) => {
-  const WHATSAPP_NUMBER = brandSettings?.whatsappNumber || '+233591259991';
+  const contact = brandSettings?.storefront?.contact;
+  const WHATSAPP_NUMBER = contact?.whatsapp || brandSettings?.whatsappNumber || '+233591259991';
   const brandName = brandSettings?.brandName || "OMAN'S VOGUE";
-  const INSTAGRAM_HANDLE = 'Eugeniaa..a';
+  const INSTAGRAM_HANDLE = contact?.instagram ?? 'Eugeniaa..a';
 
   const [formState, setFormState] = useState({ name: '', email: '', message: '' });
-  const [submitted, setSubmitted] = useState(false);
+  const [draft, setDraft] = useState('');
 
   const handleSubmit = (e) => {
     e.preventDefault();
     if (!formState.name || !formState.email || !formState.message) return;
     
-    // Simulate luxury response
-    setSubmitted(true);
-    setTimeout(() => {
-      setSubmitted(false);
-      setFormState({ name: '', email: '', message: '' });
-    }, 4000);
-  };
+    const text = encodeURIComponent(`Hello ${brandName}!
+${formState.message}
 
-  const handleLiveChat = () => {
-    const text = encodeURIComponent(
-      `Hello ${brandName}! I'd like to initiate a live consultation regarding perfume choices.`
-    );
-    window.open(`https://wa.me/${WHATSAPP_NUMBER.replace(/\D/g, '')}?text=${text}`, '_blank');
+${formState.name}
+${formState.email}`);
+    const url = `https://wa.me/${WHATSAPP_NUMBER.replace(/\D/g, '')}?text=${text}`;
+    setDraft(url);
+    window.open(url, '_blank', 'noopener,noreferrer');
   };
 
   return (
@@ -69,8 +65,11 @@ const Contact = ({ brandSettings }) => {
               </div>
             </div>
 
-            {/* Instagram */}
-            <div className="flex gap-4 items-center group">
+            {contact?.email && <div className="flex gap-4 items-center">
+              <Mail size={16} />
+              <a href={`mailto:${contact.email}`} className="text-sm break-all text-luxury-champagne">{contact.email}</a>
+            </div>}
+            {INSTAGRAM_HANDLE && <div className="flex gap-4 items-center group">
               <div className="p-3 bg-luxury-charcoal border border-luxury-rosegold/10 text-luxury-rosegold rounded-full group-hover:border-luxury-rosegold/30 transition-colors">
                 <Instagram size={16} />
               </div>
@@ -85,7 +84,7 @@ const Contact = ({ brandSettings }) => {
                   @{INSTAGRAM_HANDLE}
                 </a>
               </div>
-            </div>
+            </div>}
 
             {/* Location */}
             <div className="flex gap-4 items-center group">
@@ -93,9 +92,9 @@ const Contact = ({ brandSettings }) => {
                 <MapPin size={16} />
               </div>
               <div>
-                <span className="text-[9px] uppercase tracking-wider text-luxury-champagne/40 block mb-0.5">Atelier Hub</span>
+                <span className="text-[9px] uppercase tracking-wider text-luxury-champagne/40 block mb-0.5">Pickup location</span>
                 <span className="text-xs text-white font-light">
-                  East Legon Boutique Street, Accra, Ghana
+                  {brandSettings.pickupLocation}
                 </span>
               </div>
             </div>
@@ -106,17 +105,9 @@ const Contact = ({ brandSettings }) => {
         <div className="lg:col-span-7">
           <div className="glass-panel p-6 sm:p-8 border border-luxury-rosegold/10 relative overflow-hidden">
             
-            {submitted ? (
-              <div className="py-12 flex flex-col items-center justify-center text-center space-y-4 animate-fade-in">
-                <div className="w-12 h-12 bg-luxury-gold/10 border border-luxury-gold rounded-full flex items-center justify-center text-luxury-gold animate-pulse">
-                  <CheckCircle2 size={24} />
-                </div>
-                <h4 className="font-serif text-sm uppercase tracking-widest text-white">Message Transmitted</h4>
-                <p className="text-[11px] text-luxury-champagne/60 leading-relaxed max-w-xs mx-auto font-light">
-                  Our fragrance concierge team has received your ticket and will write back to your coordinates within the hour.
-                </p>
-              </div>
-            ) : (
+            {draft && <div className="mb-5 text-sm" role="status">
+              Press Send in WhatsApp to deliver your message. <a href={draft} target="_blank" rel="noreferrer" className="underline">Open WhatsApp again</a>
+            </div>}
               <form onSubmit={handleSubmit} className="space-y-6">
                 <h3 className="text-xs uppercase tracking-widest text-white font-bold flex items-center gap-1.5 border-b border-luxury-rosegold/10 pb-3">
                   <Sparkles size={12} className="text-luxury-gold animate-pulse" />
@@ -125,10 +116,10 @@ const Contact = ({ brandSettings }) => {
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="flex flex-col gap-1.5">
-                    <label className="text-[9px] uppercase text-luxury-champagne/50 tracking-wider font-semibold">Your Name</label>
+                    <label htmlFor="contact-name" className="text-[9px] uppercase text-luxury-champagne/50 tracking-wider font-semibold">Your Name</label>
                     <input
                       required
-                      type="text"
+                      type="text" id="contact-name" maxLength={120}
                       placeholder="Jane Doe"
                       value={formState.name}
                       onChange={(e) => setFormState(prev => ({ ...prev, name: e.target.value }))}
@@ -136,10 +127,10 @@ const Contact = ({ brandSettings }) => {
                     />
                   </div>
                   <div className="flex flex-col gap-1.5">
-                    <label className="text-[9px] uppercase text-luxury-champagne/50 tracking-wider font-semibold">Your Email</label>
+                    <label htmlFor="contact-email" className="text-[9px] uppercase text-luxury-champagne/50 tracking-wider font-semibold">Your Email</label>
                     <input
                       required
-                      type="email"
+                      type="email" id="contact-email" maxLength={254}
                       placeholder="jane@example.com"
                       value={formState.email}
                       onChange={(e) => setFormState(prev => ({ ...prev, email: e.target.value }))}
@@ -149,10 +140,10 @@ const Contact = ({ brandSettings }) => {
                 </div>
 
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-[9px] uppercase text-luxury-champagne/50 tracking-wider font-semibold">Concierge Message</label>
+                  <label htmlFor="contact-message" className="text-[9px] uppercase text-luxury-champagne/50 tracking-wider font-semibold">Concierge Message</label>
                   <textarea
                     required
-                    rows="4"
+                    rows="4" id="contact-message" maxLength={1600}
                     placeholder="Hello! I would like to seek recommendation for wedding scent favors..."
                     value={formState.message}
                     onChange={(e) => setFormState(prev => ({ ...prev, message: e.target.value }))}
@@ -165,10 +156,9 @@ const Contact = ({ brandSettings }) => {
                   className="w-full py-4 bg-transparent border border-luxury-gold/50 text-luxury-gold hover:bg-luxury-gold hover:text-luxury-black text-xs uppercase tracking-widest font-black flex items-center justify-center gap-2 hover:shadow-[0_0_15px_rgba(212,175,55,0.2)] transition-all duration-300"
                 >
                   <Send size={12} />
-                  Transmit Concierge Ticket
+                  Open WhatsApp message
                 </button>
               </form>
-            )}
 
           </div>
         </div>

@@ -1,7 +1,8 @@
-import React, { useMemo, useState } from 'react';
-import { CheckCircle, Database, Edit2, LogOut, Package, Plus, Sparkles, ToggleLeft, ToggleRight, Trash2, Upload, X } from 'lucide-react';
-import { api, getAssetUrl, getWebPAssetUrl } from '../lib/api';
-import { assignedCollections, collections, currency, displayOption, optionPrice } from '../lib/catalogue';
+import React, { useEffect, useMemo, useState } from 'react';
+import { CheckCircle, Edit2, LogOut, Plus, Sparkles, Trash2, Upload, X } from 'lucide-react';
+import { api } from '../lib/api';
+import StoreImage from './StoreImage';
+import { assignedCollections, collectionDefinitions, currency, displayOption, optionPrice } from '../lib/catalogue';
 
 const initialProduct = {
   name: '',
@@ -10,10 +11,20 @@ const initialProduct = {
   description: '',
   notes: '',
   brand: '', collections: [], images: [], variants: [], salePrice: '', sizeMl: '', stockQuantity: '',
-  enabled: true, featured: false, newArrival: true
+  enabled: true, published: false, bestsellerFeatured: false, featured: false, newArrival: true
 };
 
-const AdminProducts = ({ products, token, onLogout, onProductUpdated, onProductDeleted, onProductAdded, onProductsRefresh }) => {
+const pageSize = 24;
+
+const AdminProducts = ({ token, onLogout, brandSettings, adminSettingsState, onBrandSettingsRefresh }) => {
+  const [products, setProducts] = useState([]);
+  const [page, setPage] = useState(0);
+  const [query, setQuery] = useState('');
+  const [hasMore, setHasMore] = useState(false);
+  const [pageState, setPageState] = useState('loading');
+  const [refresh, setRefresh] = useState(0);
+  const collections = collectionDefinitions(brandSettings.storefront || {}).map(({ id, name }) => [id, name]);
+  const reload = () => setRefresh(current => current + 1);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [formProduct, setFormProduct] = useState(initialProduct);
@@ -23,11 +34,30 @@ const AdminProducts = ({ products, token, onLogout, onProductUpdated, onProductD
   const [errorMsg, setErrorMsg] = useState('');
   const authHeaders = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
 
-  const stats = useMemo(() => {
-    const total = products.length;
-    const inStock = products.filter(product => product.inStock).length;
-    return { total, inStock, outOfStock: total - inStock };
-  }, [products]);
+  useEffect(() => {
+    const request = new AbortController();
+    const timeout = setTimeout(async () => {
+      setPageState('loading');
+      try {
+        const { data } = await api.get('/api/admin/products', {
+          headers: authHeaders, signal: request.signal,
+          params: { limit: pageSize, offset: page * pageSize, search: query.trim() }
+        });
+        if (request.signal.aborted) return;
+        if (!Array.isArray(data?.products)) throw new Error('Invalid product page.');
+        if (page > 0 && !data.products.length) {
+          setPage(previous => previous - 1);
+          return;
+        }
+        setProducts(data.products);
+        setHasMore(data.hasMore);
+        setPageState('ready');
+      } catch {
+        if (!request.signal.aborted) setPageState('error');
+      }
+    }, query ? 240 : 0);
+    return () => { clearTimeout(timeout); request.abort(); };
+  }, [authHeaders, page, query, refresh]);
 
   const showFeedback = (message) => {
     setSuccessMsg(message);
@@ -50,31 +80,32 @@ const AdminProducts = ({ products, token, onLogout, onProductUpdated, onProductD
     setFormProduct({
       ...product,
       enabled: product.enabled ?? product.inStock !== false,
-      collections: assignedCollections(product),
+      collections: assignedCollections(product).filter(id => collections.some(([key]) => id === key)),
       images: product.images?.length ? product.images : [product.image].filter(Boolean),
       variants: product.variants || []
     });
     setShowForm(true);
   };
 
-  const handleStockToggle = async (product) => {
+  const handleAvailabilityToggle = async (product, key) => {
     try {
-      const response = await api.patch(`/api/products/${product.id}`, { enabled: !(product.enabled ?? product.inStock), catalogVersion: product.catalogVersion }, { headers: authHeaders });
-      onProductUpdated(response.data);
-      await onProductsRefresh?.();
-      showFeedback('Stock status updated successfully!');
+      const { data } = await api.patch(`/api/products/${product.id}`, {
+        [key]: product[key] === false, catalogVersion: product.catalogVersion
+      }, { headers: authHeaders });
+      setProducts(current => current.map(item => item.id === data.id ? data : item));
+      showFeedback(key === 'published' ? (data.published ? 'Product published.' : 'Product unpublished.') : 'Availability updated.');
     } catch (error) {
-      showError(error.response?.data?.error || 'Could not update stock.');
+      showError(error.response?.data?.error || 'Could not update the product.');
+      if (error.response?.status === 409) reload();
     }
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm('Remove this product from the storefront?')) return;
+    if (!window.confirm('Remove this product from the storefront? Past orders will keep its details.')) return;
     try {
       await api.delete(`/api/products/${id}`, { headers: authHeaders });
-      onProductDeleted(id);
-      await onProductsRefresh?.();
-      showFeedback('Fragrance retired successfully!');
+      reload();
+      showFeedback('Product removed from the catalogue.');
     } catch (error) {
       showError(error.response?.data?.error || 'Could not remove this product.');
     }
@@ -118,18 +149,18 @@ const AdminProducts = ({ products, token, onLogout, onProductUpdated, onProductD
     setErrorMsg('');
     try {
       if (editingId) {
-        const response = await api.patch(`/api/products/${editingId}`, formProduct, { headers: authHeaders });
-        onProductUpdated(response.data);
+        await api.patch(`/api/products/${editingId}`, formProduct, { headers: authHeaders });
       } else {
-        const response = await api.post('/api/products', formProduct, { headers: authHeaders });
-        onProductAdded(response.data);
+        const { data } = await api.post('/api/products', formProduct, { headers: authHeaders });
+        setPage(0);
+        setQuery(data.name.slice(0, 80));
       }
       showFeedback('Product saved.');
       setShowForm(false);
-      await onProductsRefresh?.();
+      reload();
     } catch (error) {
       showError(error.response?.data?.error || 'Could not save this product.');
-      if (error.response?.status === 409) await onProductsRefresh?.();
+      if (error.response?.status === 409) reload();
     } finally {
       setSaving(false);
     }
@@ -154,9 +185,9 @@ const AdminProducts = ({ products, token, onLogout, onProductUpdated, onProductD
           </h2>
         </div>
         <div className="flex items-center gap-4 w-full md:w-auto justify-between md:justify-end">
-          <button onClick={startCreate} className="px-5 py-3 bg-gradient-to-r from-luxury-wine to-luxury-rosegold text-white text-xs uppercase tracking-widest font-bold flex items-center gap-2 hover:shadow-[0_0_15px_rgba(183,110,121,0.3)] transition-all transform hover:scale-[1.02] rounded-none btn-shimmer">
+          <button onClick={startCreate} disabled={adminSettingsState !== 'ready'} className="px-5 py-3 bg-gradient-to-r from-luxury-wine to-luxury-rosegold text-white text-xs uppercase tracking-widest font-bold flex items-center gap-2 hover:shadow-[0_0_15px_rgba(183,110,121,0.3)] transition-all transform hover:scale-[1.02] rounded-none btn-shimmer">
             <Plus size={14} />
-            Create Fragrance
+            Add product
           </button>
           <button onClick={onLogout} className="px-4 py-3 bg-transparent border border-luxury-rosegold/20 text-luxury-champagne hover:text-white hover:border-luxury-rosegold/50 text-xs uppercase tracking-widest font-bold flex items-center gap-2 transition-all rounded-none">
             <LogOut size={13} className="text-luxury-rosegold" />
@@ -168,22 +199,22 @@ const AdminProducts = ({ products, token, onLogout, onProductUpdated, onProductD
       {successMsg && <div className="mb-6 p-4 glass-panel border border-green-500/20 bg-green-500/5 text-green-400 text-xs flex items-center gap-2"><CheckCircle size={14} />{successMsg}</div>}
       {errorMsg && <div className="mb-6 p-4 glass-panel border border-luxury-rosegold/30 bg-luxury-wine/10 text-luxury-rosegold text-xs">{errorMsg}</div>}
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 mb-12">
-        {[
-          ['Total Fragrances', stats.total, Database, 'border-l-luxury-gold'],
-          ['Active Stock In', stats.inStock, Package, 'border-l-green-500'],
-          ['Out of Stock Count', stats.outOfStock, Package, 'border-l-luxury-rosegold']
-        ].map(([label, value, Icon, borderClass]) => (
-          <div key={label} className={`p-6 glass-panel border-l-2 ${borderClass} flex items-center justify-between`}>
-            <div>
-              <span className="text-[10px] uppercase text-luxury-champagne/50 tracking-wider font-semibold block mb-1">{label}</span>
-              <span className="text-3xl font-serif font-black text-white">{value}</span>
-            </div>
-            <Icon size={24} className="text-luxury-gold opacity-30" />
-          </div>
-        ))}
+      <div className="mb-5 flex flex-wrap items-end gap-3">
+        <label className="block flex-1 min-w-40 text-sm">
+          Search products
+          <input type="search" value={query} maxLength={80} onChange={event => {
+            setQuery(event.target.value);
+            setPage(0);
+          }} className="mt-1 block w-full border border-luxury-rosegold/25 bg-luxury-black px-3 py-2 text-sm" />
+        </label>
+        <button type="button" onClick={reload} className="border border-luxury-rosegold/25 px-3 py-2 text-sm">Refresh products</button>
       </div>
-
+      {adminSettingsState === 'error' && <p role="alert" className="mb-4 text-sm">
+        Store settings could not be loaded. <button type="button" className="underline" onClick={() => onBrandSettingsRefresh()}>Retry store settings</button>
+      </p>}
+      {pageState === 'loading' && <p role="status" className="mb-4 text-sm">Loading products…</p>}
+      {pageState === 'error' && <p role="alert" className="mb-4 text-sm">Products could not be loaded. Use Refresh products to retry.</p>}
+      {pageState === 'ready' && !products.length && <p className="mb-4 text-sm">No matching products.</p>}
       <div className="glass-panel overflow-x-auto">
         <table className="w-full text-left text-xs border-collapse">
           <thead>
@@ -198,15 +229,11 @@ const AdminProducts = ({ products, token, onLogout, onProductUpdated, onProductD
           </thead>
           <tbody className="divide-y divide-luxury-rosegold/5">
             {products.map((product) => {
-              const webPUrl = getWebPAssetUrl(product.image);
               return (
                 <tr key={product.id} className="hover:bg-white/[0.02] transition-colors">
                   <td className="p-5">
                     <div className="w-12 h-12 bg-luxury-black border border-luxury-rosegold/10 overflow-hidden">
-                      <picture className="block w-full h-full">
-                        {webPUrl && <source srcSet={webPUrl} type="image/webp" />}
-                        <img src={getAssetUrl(product.image)} alt={product.name} className="w-full h-full object-cover" loading="lazy" decoding="async" />
-                      </picture>
+                      <StoreImage image={product.image} widths={[96, 144]} sizes="48px" alt="" className="w-full h-full object-cover" />
                     </div>
                   </td>
                   <td className="p-5 font-serif text-sm font-bold text-white tracking-wide">
@@ -218,18 +245,18 @@ const AdminProducts = ({ products, token, onLogout, onProductUpdated, onProductD
                   </td>
                   <td className="p-5 font-serif font-black text-white text-sm">{currency(optionPrice(displayOption(product)))}</td>
                   <td className="p-5 text-center">
-                    <button onClick={() => handleStockToggle(product)} aria-label={`Pause or enable ${product.name}`} className="transition-colors hover:text-white">
-                      {product.inStock ? (
-                        <div className="flex items-center justify-center gap-1.5 text-green-500 font-bold tracking-wider uppercase text-[9px]"><ToggleRight size={24} />In Stock</div>
-                      ) : (
-                        <div className="flex items-center justify-center gap-1.5 text-luxury-rosegold font-bold tracking-wider uppercase text-[9px] opacity-60"><ToggleLeft size={24} />Out of Stock</div>
-                      )}
-                    </button>
+                    <div className="text-xs">{product.inStock ? 'In stock' : 'Out of stock'}</div>
+                    <button type="button" onClick={() => handleAvailabilityToggle(product, 'enabled')}
+                      aria-label={`${product.enabled !== false ? 'Pause' : 'Enable'} purchasing for ${product.name}`}
+                      className="mt-2 text-xs underline">{product.enabled !== false ? 'Pause purchasing' : 'Enable purchasing'}</button>
                   </td>
                   <td className="p-5 text-right">
                     <div className="flex items-center justify-end gap-3">
-                      <button onClick={() => startEdit(product)} className="p-2 border border-luxury-rosegold/10 text-luxury-champagne/60 hover:text-luxury-gold hover:border-luxury-gold/30 rounded-full transition-all"><Edit2 size={13} /></button>
-                      <button onClick={() => handleDelete(product.id)} className="p-2 border border-luxury-rosegold/10 text-luxury-champagne/60 hover:text-luxury-rosegold hover:border-luxury-rosegold/30 rounded-full transition-all"><Trash2 size={13} /></button>
+                      <button type="button" onClick={() => handleAvailabilityToggle(product, 'published')}
+                        aria-label={`${product.published !== false ? 'Unpublish' : 'Publish'} ${product.name}`}
+                        className="text-xs underline">{product.published !== false ? 'Unpublish' : 'Publish'}</button>
+                      <button aria-label={`Edit ${product.name}`} onClick={() => startEdit(product)} disabled={adminSettingsState !== 'ready'} className="p-2 border border-luxury-rosegold/10 text-luxury-champagne/60 hover:text-luxury-gold hover:border-luxury-gold/30 rounded-full transition-all"><Edit2 size={13} /></button>
+                      <button aria-label={`Remove ${product.name}`} onClick={() => handleDelete(product.id)} className="p-2 border border-luxury-rosegold/10 text-luxury-champagne/60 hover:text-luxury-rosegold hover:border-luxury-rosegold/30 rounded-full transition-all"><Trash2 size={13} /></button>
                     </div>
                   </td>
                 </tr>
@@ -238,6 +265,12 @@ const AdminProducts = ({ products, token, onLogout, onProductUpdated, onProductD
           </tbody>
         </table>
       </div>
+
+      <nav aria-label="Product pages" className="mt-5 flex items-center justify-between gap-3 text-sm">
+        <button type="button" onClick={() => setPage(page - 1)} disabled={page === 0 || pageState !== 'ready'} className="border px-3 py-2 disabled:opacity-40">Previous</button>
+        <span aria-live="polite">Page {page + 1}</span>
+        <button type="button" onClick={() => setPage(page + 1)} disabled={!hasMore || pageState !== 'ready'} className="border px-3 py-2 disabled:opacity-40">Next</button>
+      </nav>
 
       {showForm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -294,7 +327,7 @@ const AdminProducts = ({ products, token, onLogout, onProductUpdated, onProductD
                     ))}
                   </fieldset>
                   <div className="flex flex-wrap gap-4">
-                    {[['featured', 'Featured product'], ['newArrival', 'Show in New Arrivals']].map(([key, label]) => (
+                    {[['published', 'Publish on storefront'], ['featured', 'Featured product'], ['newArrival', 'Show in New Arrivals'], ['bestsellerFeatured', 'Include in Best Sellers as a store pick']].map(([key, label]) => (
                       <label key={key} className="flex items-center gap-2 text-sm text-luxury-champagne">
                         <input type="checkbox" checked={Boolean(formProduct[key])} onChange={event => setField(key, event.target.checked)} />
                         {label}
@@ -312,10 +345,8 @@ const AdminProducts = ({ products, token, onLogout, onProductUpdated, onProductD
                   <div className="w-full text-center mb-4">
                     <label className="text-[9px] uppercase text-luxury-champagne/50 tracking-wider font-semibold block mb-2">Visual Showcase Preview</label>
                     <div className="w-full aspect-[4/5] bg-luxury-black border border-luxury-rosegold/10 overflow-hidden relative group">
-                      <picture className="block w-full h-full">
-                        {getWebPAssetUrl(primaryImage) && <source srcSet={getWebPAssetUrl(primaryImage)} type="image/webp" />}
-                        <img src={getAssetUrl(primaryImage)} alt="Form Preview" className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" decoding="async" />
-                      </picture>
+                      <StoreImage image={primaryImage} widths={[320, 640]} sizes="(min-width: 768px) 260px, 85vw"
+                        alt="Form preview" className="w-full h-full object-cover" />
                       <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent flex flex-col justify-end p-3">
                         <span className="text-[8px] text-luxury-gold uppercase tracking-widest font-black flex items-center justify-center gap-1"><Sparkles size={8} /> dynamic display <Sparkles size={8} /></span>
                       </div>
@@ -329,7 +360,7 @@ const AdminProducts = ({ products, token, onLogout, onProductUpdated, onProductD
                   <ul className="w-full mt-3 space-y-2">
                     {formProduct.images.map((image, index) => (
                       <li key={image} className="flex items-center gap-2 text-xs">
-                        <img src={getAssetUrl(image)} alt="" className="w-9 h-9 object-cover" />
+                        <span className="w-9 h-9"><StoreImage image={image} widths={[72, 144]} sizes="36px" className="w-full h-full object-cover" /></span>
                         <button type="button" disabled={index === 0} className="flex-1 text-left text-luxury-gold disabled:text-luxury-champagne/70"
                           onClick={() => setField('images', [image, ...formProduct.images.filter(value => value !== image)])}>
                           {index === 0 ? 'Cover image' : 'Make cover'}

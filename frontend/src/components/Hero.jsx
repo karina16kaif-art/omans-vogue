@@ -1,6 +1,6 @@
 import React from 'react';
 import { Send, ArrowDown } from 'lucide-react';
-import { getAssetUrl, getWebPAssetUrl } from '../lib/api';
+import StoreImage from './StoreImage';
 
 const DEFAULT_SETTINGS = {
   brandName: "OMAN'S VOGUE",
@@ -14,13 +14,15 @@ const DEFAULT_SETTINGS = {
 
 const Hero = ({ onExploreClick, brandSettings }) => {
   const settings = { ...DEFAULT_SETTINGS, ...(brandSettings || {}) };
-  const heroWebP = settings.heroBackgroundWebp || getWebPAssetUrl(settings.heroBackgroundImage);
+  const defaultHero = settings.heroBackgroundImage === DEFAULT_SETTINGS.heroBackgroundImage &&
+    (!settings.heroBackgroundWebp || settings.heroBackgroundWebp === DEFAULT_SETTINGS.heroBackgroundWebp);
   
   const handleWhatsAppChat = () => {
     const text = encodeURIComponent(
       `Hello ${settings.brandName}! I am visiting your virtual luxury store and would like to seek fragrance recommendations for my personal inner growth. Please guide me through your collections!`
     );
-    window.open(`https://wa.me/${settings.whatsappNumber.replace(/\D/g, '')}?text=${text}`, '_blank');
+    const supportNumber = settings.storefront?.contact?.whatsapp || settings.whatsappNumber;
+    window.open(`https://wa.me/${supportNumber.replace(/\D/g, '')}?text=${text}`, '_blank', 'noopener,noreferrer');
   };
 
   return (
@@ -30,22 +32,15 @@ const Hero = ({ onExploreClick, brandSettings }) => {
       <div className="absolute inset-0 z-0 select-none pointer-events-none">
         <div className="absolute inset-0 bg-gradient-to-t from-luxury-black via-luxury-black/40 to-transparent z-10" />
         <div className="absolute inset-0 bg-gradient-to-r from-luxury-black via-transparent to-luxury-black/30 z-10" />
-        <picture className="block w-full h-full">
-          {heroWebP && <source srcSet={getAssetUrl(heroWebP)} type="image/webp" />}
-          <img
-            src={getAssetUrl(settings.heroBackgroundImage)}
-            alt="Cinematic Perfume Spray"
-            className="w-full h-full object-cover object-center scale-105 hero-pan-zoom"
-            decoding="async"
-            fetchPriority="high"
-          />
-        </picture>
+        <StoreImage image={settings.heroBackgroundImage} webp={settings.heroBackgroundWebp}
+          mobileWebp={defaultHero ? '/images/hero_mobile.webp' : undefined}
+          widths={[640, 960, 1280, 1920]} sizes="100vw" eager
+          className="w-full h-full object-cover object-center" />
       </div>
 
       {/* Floating Sparkles and Orbs Overlay */}
       <div className="absolute inset-0 z-10 pointer-events-none mix-blend-screen opacity-65">
-        <div className="absolute top-[20%] left-[30%] w-[350px] h-[350px] bg-luxury-wine/25 rounded-full filter blur-[120px] animate-pulse" />
-        <div className="absolute bottom-[20%] right-[25%] w-[400px] h-[400px] bg-luxury-rosegold/15 rounded-full filter blur-[140px] animate-pulse" style={{ animationDelay: '2s' }} />
+        <div className="absolute inset-0 hero-light" />
       </div>
 
       {/* Front-Facing Content Wrapper */}
@@ -53,7 +48,7 @@ const Hero = ({ onExploreClick, brandSettings }) => {
         
         {/* Subtle Luxury Subtitle */}
         <div className="mb-4 md:mb-6 overflow-hidden">
-          <span className="inline-block text-[10px] md:text-xs tracking-[0.4em] uppercase font-bold text-luxury-rosegold text-reveal">
+          <span className="inline-block text-[10px] md:text-xs tracking-[0.4em] uppercase font-bold text-luxury-rosegold">
             {settings.heroEyebrow}
           </span>
         </div>
@@ -67,8 +62,8 @@ const Hero = ({ onExploreClick, brandSettings }) => {
         </h1>
 
         {/* Emotionally Charged Philosophy Text */}
-        <div className="max-w-2xl mb-10 overflow-hidden">
-          <p className="font-sans text-sm sm:text-base md:text-lg text-luxury-champagne/80 font-light tracking-wide leading-relaxed text-reveal" style={{ animationDelay: '0.4s' }}>
+        <div className="max-w-2xl mb-10 min-h-14 flex items-center">
+          <p className="font-sans text-sm sm:text-base md:text-lg text-luxury-champagne/80 font-light tracking-wide leading-relaxed">
             {settings.heroSubtitle}
           </p>
         </div>

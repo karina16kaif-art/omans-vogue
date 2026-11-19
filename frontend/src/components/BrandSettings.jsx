@@ -1,7 +1,7 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { CheckCircle, ImageUp, Save, Sparkles, Upload } from 'lucide-react';
 import { api, getAssetUrl, getWebPAssetUrl } from '../lib/api';
-import { collections, homepageSections } from '../lib/catalogue';
+import { collectionDefinitions, homepageSections } from '../lib/catalogue';
 
 const DEFAULT_SETTINGS = {
   brandName: "OMAN'S VOGUE",
@@ -24,11 +24,8 @@ const BrandSettings = ({ token, brandSettings, onBrandSettingsUpdated, onBrandSe
   const [uploading, setUploading] = useState(false);
   const [successMsg, setSuccessMsg] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
+  const [conflict, setConflict] = useState(false);
   const authHeaders = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
-
-  useEffect(() => {
-    setSettings({ ...DEFAULT_SETTINGS, ...(brandSettings || {}) });
-  }, [brandSettings]);
 
   const showSuccess = (message) => {
     setSuccessMsg(message);
@@ -57,18 +54,33 @@ const BrandSettings = ({ token, brandSettings, onBrandSettingsUpdated, onBrandSe
     });
   };
 
+  const editCollections = (update) => setSettings(previous => ({
+    ...previous,
+    storefront: {
+      ...previous.storefront,
+      collectionDefinitions: update(collectionDefinitions(previous.storefront))
+    }
+  }));
+
+  const editContact = (key, value) => setSettings(previous => ({
+    ...previous,
+    storefront: { ...previous.storefront, contact: { ...previous.storefront?.contact, [key]: value } }
+  }));
+
   const handleSave = async (event) => {
     event.preventDefault();
     setSaving(true);
     setErrorMsg('');
+    setConflict(false);
     try {
       const response = await api.post('/api/settings', settings, { headers: authHeaders });
+      setSettings({ ...DEFAULT_SETTINGS, ...response.data });
       onBrandSettingsUpdated?.(response.data);
-      await onBrandSettingsRefresh?.();
       showSuccess('Brand settings saved permanently.');
     } catch (error) {
       console.error('Failed to save brand settings:', error.response?.data || error.message, error);
       showError(getApiErrorMessage(error, 'Brand settings could not be saved. Refresh your admin session and try again.'));
+      setConflict(error.response?.status === 409);
     } finally {
       setSaving(false);
     }
@@ -92,9 +104,11 @@ const BrandSettings = ({ token, brandSettings, onBrandSettingsUpdated, onBrandSe
         heroBackgroundImage: response.data?.imageUrl || settings.heroBackgroundImage,
         heroBackgroundWebp: response.data?.imageUrl || settings.heroBackgroundWebp
       };
-      setSettings(nextSettings);
+      setSettings(previous => ({
+        ...previous, heroBackgroundImage: nextSettings.heroBackgroundImage,
+        heroBackgroundWebp: nextSettings.heroBackgroundWebp, settingsRevision: nextSettings.settingsRevision
+      }));
       onBrandSettingsUpdated?.(nextSettings);
-      await onBrandSettingsRefresh?.();
       showSuccess('Hero background image updated.');
     } catch (error) {
       console.error('Hero background upload failed:', error.response?.data || error.message, error);
@@ -129,6 +143,7 @@ const BrandSettings = ({ token, brandSettings, onBrandSettingsUpdated, onBrandSe
           {errorMsg}
         </div>
       )}
+      {conflict && <button type="button" className="text-sm underline" onClick={() => onBrandSettingsRefresh?.()}>Load current settings</button>}
 
       <form onSubmit={handleSave} className="grid grid-cols-1 lg:grid-cols-12 gap-8">
         <div className="lg:col-span-7 glass-panel p-6 sm:p-8 space-y-5">
@@ -159,18 +174,42 @@ const BrandSettings = ({ token, brandSettings, onBrandSettingsUpdated, onBrandSe
           </fieldset>
 
           <fieldset className="space-y-4 pt-2">
+            <legend className="text-sm uppercase tracking-widest text-luxury-rosegold font-bold mb-2">Customer contact</legend>
+            <Input label="WhatsApp support number" type="tel" value={settings.storefront?.contact?.whatsapp} placeholder="Uses the order number when blank"
+              onChange={value => editContact('whatsapp', value)} />
+            <Input label="Public support email" type="email" maxLength={254} value={settings.storefront?.contact?.email}
+              onChange={value => editContact('email', value)} />
+            <Input label="Instagram username" maxLength={30} value={settings.storefront?.contact?.instagram ?? 'Eugeniaa..a'}
+              onChange={value => editContact('instagram', value)} />
+          </fieldset>
+
+          <fieldset className="space-y-4 pt-2">
             <legend className="text-sm uppercase tracking-widest text-luxury-rosegold font-bold mb-2">Storefront collections</legend>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              {collections.map(([key, label]) => (
-                <label key={key} className="flex items-center gap-2 text-sm text-luxury-champagne">
-                  <input type="checkbox" checked={settings.storefront?.collectionVisibility?.[key] !== false} onChange={event => handleChange('storefront', {
-                    ...settings.storefront,
-                    collectionVisibility: { ...settings.storefront?.collectionVisibility, [key]: event.target.checked }
-                  })} />
-                  Show {label}
-                </label>
+            <div className="space-y-3">
+              {collectionDefinitions(settings.storefront).map(({ id, name, visible }, index) => (
+                <div key={id} className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto_auto] gap-2 sm:items-end p-3 border border-luxury-rosegold/15">
+                  <Input label={`Collection ${index + 1} name`} maxLength={64} required value={name}
+                    onChange={value => editCollections(items => items.map(item => item.id === id ? { ...item, name: value } : item))} />
+                  <label className="flex items-center gap-1.5 text-sm pb-2">
+                    <input type="checkbox" checked={visible !== false}
+                      onChange={event => editCollections(items => items.map(item => item.id === id ? { ...item, visible: event.target.checked } : item))} />
+                    Visible
+                  </label>
+                  <button type="button" aria-label={`Remove collection ${name || index + 1}`} className="justify-self-start text-sm underline pb-2"
+                    onClick={() => {
+                      if (!name || window.confirm(`Remove ${name} from the storefront? Products and past orders are kept.`)) {
+                        editCollections(items => items.filter(item => item.id !== id));
+                      }
+                    }}>Remove</button>
+                </div>
               ))}
             </div>
+            <button type="button" className="border border-luxury-rosegold/30 px-4 py-2 text-sm"
+              disabled={collectionDefinitions(settings.storefront).length >= 64}
+              onClick={() => {
+                const entry = { id: `custom-${crypto.randomUUID()}`, name: '', visible: true };
+                editCollections(items => [...items, entry]);
+              }}>Add collection</button>
             <Input label="Affordable price threshold (GH₵)" type="number" min="0.01" step="0.01"
               value={settings.storefront?.affordableThreshold}
               onChange={value => handleChange('storefront', { ...settings.storefront, affordableThreshold: value })} />

@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import { X, ShoppingBag, Wallet, AlertTriangle, Check } from 'lucide-react';
-import { getAssetUrl, getWebPAssetUrl } from '../lib/api';
+import StoreImage from './StoreImage';
 import { cartKey, collectionLabel, currency, lineKey, optionAvailable, optionPrice } from '../lib/catalogue';
 
-const ProductModal = ({ product, relatedProducts, onSelectProduct, onClose, onAddToCart, onCheckout, cart }) => {
+const ProductModal = ({ product, settings, relatedProducts, onSelectProduct, onClose, onAddToCart, onCheckout, cart }) => {
   const variants = product.variants || [];
   const [activeImage, setActiveImage] = useState(0);
   const [variantId, setVariantId] = useState(() => variants.find(option => optionAvailable(product, option))?.id || variants[0]?.id);
@@ -13,9 +13,7 @@ const ProductModal = ({ product, relatedProducts, onSelectProduct, onClose, onAd
   const isInCart = cart.some(item => cartKey(item) === lineKey(product.id, selectedVariant?.id));
   const images = product.images?.length ? product.images : [product.image];
   const image = images[activeImage] || images[0];
-  const label = collectionLabel(product);
-  const productImageUrl = getAssetUrl(image);
-  const productWebPUrl = getWebPAssetUrl(image);
+  const label = collectionLabel(product, settings);
 
   // Split notes string if comma-separated
   const notesArray = product.notes ? product.notes.split(',').map(n => n.trim()) : [];
@@ -45,15 +43,8 @@ const ProductModal = ({ product, relatedProducts, onSelectProduct, onClose, onAd
         {/* Column 1: Image Showcase */}
         <div className="w-full md:w-1/2 shrink-0 md:max-h-[90dvh] md:overflow-y-auto bg-luxury-black">
           <div className="aspect-square relative overflow-hidden select-none">
-          <picture className="block w-full h-full">
-            {productWebPUrl && <source srcSet={productWebPUrl} type="image/webp" />}
-            <img
-              src={productImageUrl}
-              alt={product.name}
-              className="w-full h-full object-cover object-center pointer-events-none"
-              decoding="async"
-            />
-          </picture>
+          <StoreImage image={image} widths={[400, 640, 960, 1200]} sizes="(min-width: 920px) 450px, (min-width: 768px) 50vw, 95vw"
+            eager alt={product.name} className="w-full h-full object-cover object-center" />
           {!product.inStock && (
             <div className="absolute inset-0 bg-luxury-black/75 flex items-center justify-center p-4">
               <span className="px-4 py-2 border border-luxury-rosegold text-luxury-rosegold text-xs uppercase tracking-widest font-black font-serif shadow-lg bg-black/95">
@@ -68,7 +59,7 @@ const ProductModal = ({ product, relatedProducts, onSelectProduct, onClose, onAd
                 <button key={source} type="button" aria-label={`View image ${index + 1}`} aria-pressed={activeImage === index}
                   onClick={() => setActiveImage(index)}
                   className={`w-14 h-14 shrink-0 border ${activeImage === index ? 'border-luxury-gold' : 'border-luxury-rosegold/25'}`}>
-                  <img src={getAssetUrl(source)} alt="" className="w-full h-full object-cover" loading="lazy" />
+                  <StoreImage image={source} widths={[112, 168]} sizes="56px" className="w-full h-full object-cover" />
                 </button>
               ))}
             </div>
@@ -191,7 +182,7 @@ const ProductModal = ({ product, relatedProducts, onSelectProduct, onClose, onAd
                 {relatedProducts.map(related => (
                   <button type="button" key={related.id} onClick={() => onSelectProduct(related)}
                     className="text-left text-xs text-luxury-champagne hover:text-white">
-                    <img src={getAssetUrl(related.image)} alt="" className="w-full aspect-square object-cover mb-1" loading="lazy" />
+                    <div className="aspect-square mb-1"><StoreImage image={related.image} widths={[144, 288]} sizes="120px" className="w-full h-full object-cover" /></div>
                     {related.name}
                   </button>
                 ))}

@@ -4,15 +4,17 @@ import Particles from './components/Particles';
 import Navbar from './components/Navbar';
 import Hero from './components/Hero';
 import Catalog from './components/Catalog';
-import ProductModal from './components/ProductModal';
-import CartDrawer from './components/CartDrawer';
-import CheckoutModal from './components/CheckoutModal';
 import About from './components/About';
 import Contact from './components/Contact';
 import Footer from './components/Footer';
 import SeoMeta from './components/SeoMeta';
 import { ShopByCollection, ProductShowcases, FulfilmentInfo } from './components/StorefrontSections';
 import { cartKey, lineKey, memberships, optionAvailable, optionPrice, visibleCollections } from './lib/catalogue';
+
+const ProductModal = lazy(() => import('./components/ProductModal'));
+const CartDrawer = lazy(() => import('./components/CartDrawer'));
+const CheckoutModal = lazy(() => import('./components/CheckoutModal'));
+const ModalLoading = () => <p role="status" className="fixed bottom-4 left-4 z-50 bg-luxury-charcoal px-4 py-2 text-sm">Loading…</p>;
 
 const AdminDashboard = lazy(() => import('./components/AdminConsole'));
 const AdminLogin = lazy(() => import('./components/AdminLogin'));
@@ -30,209 +32,10 @@ const DEFAULT_BRAND_SETTINGS = {
   storefront: {}
 };
 
-const FALLBACK_PRODUCTS = [
-  {
-    "id": 1,
-    "name": "Covered In Roses",
-    "category": "Women",
-    "price": 180,
-    "inStock": true,
-    "description": "An opulent, passionate fragrance that drapes your senses in freshly cut ruby roses, sweet berries, and soft warm amber.",
-    "notes": "Red Rose Petals, Sun-Ripened Berries, Velvet Amber",
-    "image": "/images/products/women_placeholder.png"
-  },
-  {
-    "id": 2,
-    "name": "You’re The One",
-    "category": "Women",
-    "price": 180,
-    "inStock": true,
-    "description": "A beautiful, self-assured fragrance. A confident blend of velvet rose, white birch, and a drop of sweet strawberry nectar.",
-    "notes": "Velvet Rose, White Birch, Strawberry Nectar",
-    "image": "/images/products/women_placeholder.png"
-  },
-  {
-    "id": 3,
-    "name": "Champagne Toast",
-    "category": "Women",
-    "price": 180,
-    "inStock": true,
-    "description": "A celebratory spritz of bubbly champagne, sparkling berries, and juicy tangerine that evokes pure bliss and confidence.",
-    "notes": "Bubbly Champagne, Sparkling Berries, Tangerine",
-    "image": "/images/products/women_placeholder.png"
-  },
-  {
-    "id": 4,
-    "name": "Strawberry Pound Cake",
-    "category": "Women",
-    "price": 180,
-    "inStock": true,
-    "description": "A sweet, comforting treat of golden shortcake, rich whipped cream, and fresh vine-ripened strawberries.",
-    "notes": "Fresh Strawberries, Golden Shortcake, Whipped Cream",
-    "image": "/images/products/women_placeholder.png"
-  },
-  {
-    "id": 5,
-    "name": "Warm Vanilla Sugar",
-    "category": "Women",
-    "price": 180,
-    "inStock": true,
-    "description": "An iconic, comforting blend of creamy vanilla, sweet coconut, and white orchid, grounded by fresh sandalwood.",
-    "notes": "Intense Vanilla, White Orchid, Sparkling Sugar, Sandalwood",
-    "image": "/images/products/women_placeholder.png"
-  },
-  {
-    "id": 6,
-    "name": "In The Stars",
-    "category": "Women",
-    "price": 180,
-    "inStock": true,
-    "description": "A sparkling blend of starflower, sandalwood musk, sugared tangelo, white agarwood, and warm radiant amber.",
-    "notes": "Starflower, Sandalwood Musk, Sugared Tangelo, White Agarwood, Amber",
-    "image": "/images/products/women_placeholder.png"
-  },
-  {
-    "id": 7,
-    "name": "Vanilla Romance",
-    "category": "Women",
-    "price": 180,
-    "inStock": true,
-    "description": "A captivating, seductive vanilla laced with spicy cardamom, rich woods, and midnight jasmine.",
-    "notes": "Madagascar Vanilla, Cardamom, Velvet Woods, Midnight Jasmine",
-    "image": "/images/products/women_placeholder.png"
-  },
-  {
-    "id": 8,
-    "name": "A Thousand Wishes",
-    "category": "Women",
-    "price": 180,
-    "inStock": true,
-    "description": "Warm your heart a thousand times over with a festive blend of pink champagne, crystal peonies, and almond crème.",
-    "notes": "Pink Champagne, Crystal Peonies, Velvet Amaretto, Almond Crème",
-    "image": "/images/products/women_placeholder.png"
-  },
-  {
-    "id": 9,
-    "name": "Floral Fantasy",
-    "category": "Women",
-    "price": 180,
-    "inStock": true,
-    "description": "An ethereal garden breeze carrying notes of freshly bloomed lilies, dewy cherry blossoms, and sweet morning rainfall.",
-    "notes": "Dewy Lilies, Cherry Blossom, Morning Rainfall, Sweet Oakmoss",
-    "image": "/images/products/women_placeholder.png"
-  },
-  {
-    "id": 10,
-    "name": "Gingham",
-    "category": "Women",
-    "price": 180,
-    "inStock": true,
-    "description": "A fresh, vibrant, and happy celebration of bright blue freesia, sweet clementine, and soft violet petals.",
-    "notes": "Blue Freesia, Sweet Clementine, Soft Violet Petals",
-    "image": "/images/products/women_placeholder.png"
-  },
-  {
-    "id": 11,
-    "name": "Pure Wonder",
-    "category": "Women",
-    "price": 180,
-    "inStock": true,
-    "description": "Delight in a sense of wonder with this clean, sparkling blend of iced rosé, star jasmine, and warm white amber.",
-    "notes": "Iced Rosé, Star Jasmine, Warm White Amber",
-    "image": "/images/products/women_placeholder.png"
-  },
-  {
-    "id": 12,
-    "name": "Pink Tie Dye",
-    "category": "Women",
-    "price": 180,
-    "inStock": true,
-    "description": "A fun, artistic fragrance swirling with sun-kissed pink lady apples, wild cotton flower, and sweet sugar cane.",
-    "notes": "Pink Lady Apple, Wild Cotton Flower, Sugared Cane",
-    "image": "/images/products/women_placeholder.png"
-  },
-  {
-    "id": 13,
-    "name": "Touch Of Gold",
-    "category": "Women",
-    "price": 180,
-    "inStock": true,
-    "description": "Pure luxury bottled. Radiate majesty with golden honey, absolute jasmine, and a heavy trail of royal patchouli and musk.",
-    "notes": "Golden Honey, Absolute Jasmine, Royal Patchouli, Warm Musk",
-    "image": "/images/products/women_placeholder.png"
-  },
-  {
-    "id": 14,
-    "name": "First Sight",
-    "category": "Men",
-    "price": 150,
-    "inStock": true,
-    "description": "A magnetic and unforgettable first impression of fresh cedarwood, aromatic sage, and crisp mountain air.",
-    "notes": "Fresh Cedarwood, Aromatic Sage, Crisp Air, Bergamot",
-    "image": "/images/products/men_placeholder.png"
-  },
-  {
-    "id": 15,
-    "name": "Graphite",
-    "category": "Men",
-    "price": 150,
-    "inStock": true,
-    "description": "A bold, sophisticated blend of dark sage, rich leather, bergamot, and precious cedarwood.",
-    "notes": "Dark Sage, Rich Leather, Italian Bergamot, Cedarwood",
-    "image": "/images/products/men_placeholder.png"
-  },
-  {
-    "id": 16,
-    "name": "Black Tie",
-    "category": "Men",
-    "price": 150,
-    "inStock": true,
-    "description": "An elegant, formal fragrance featuring aromatic sage, warm tonka bean, rich sandalwood, and dark incense.",
-    "notes": "Aromatic Sage, Dark Tonka Bean, Sandalwood, Incense",
-    "image": "/images/products/men_placeholder.png"
-  }
-];
-
-const getInitialProducts = () => {
-  if (window.location.pathname === '/admin') {
-    return [];
-  }
-
-  try {
-    const cachedProducts = localStorage.getItem('omans_products_cache');
-    if (cachedProducts) {
-      const parsedProducts = JSON.parse(cachedProducts);
-      if (Array.isArray(parsedProducts)) {
-        return parsedProducts;
-      }
-    }
-  } catch (err) {
-    console.warn('Failed to load cached product collection.', err);
-  }
-
-  return FALLBACK_PRODUCTS;
-};
-
-const getInitialBrandSettings = () => {
-  try {
-    const cachedSettings = localStorage.getItem('omans_brand_settings_cache');
-    if (cachedSettings) {
-      const parsedSettings = JSON.parse(cachedSettings);
-      if (parsedSettings && typeof parsedSettings === 'object') {
-        return { ...DEFAULT_BRAND_SETTINGS, ...parsedSettings };
-      }
-    }
-  } catch (err) {
-    console.warn('Failed to load cached brand settings.', err);
-  }
-
-  return DEFAULT_BRAND_SETTINGS;
-};
-
 const App = () => {
   // Global States
-  const [products, setProducts] = useState(getInitialProducts);
-  const [brandSettings, setBrandSettings] = useState(getInitialBrandSettings);
+  const [products, setProducts] = useState([]);
+  const [brandSettings, setBrandSettings] = useState(DEFAULT_BRAND_SETTINGS);
   const [cart, setCart] = useState([]);
   const [activeSection, setActiveSection] = useState('home');
   const [collection, setCollection] = useState('');
@@ -243,18 +46,17 @@ const App = () => {
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
   const [checkoutReceipt, setCheckoutReceipt] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [catalogueLoaded, setCatalogueLoaded] = useState(false);
+  const [catalogueError, setCatalogueError] = useState('');
+  const [adminSettingsState, setAdminSettingsState] = useState('loading');
+  const [checkoutStarted, setCheckoutStarted] = useState(false);
+  const storefrontRequest = useRef(null);
   const [routePath, setRoutePath] = useState(() => window.location.pathname);
   const [adminToken, setAdminToken] = useState(() => localStorage.getItem('omans_admin_token') || '');
   const [adminVerified, setAdminVerified] = useState(false);
   const [adminChecking, setAdminChecking] = useState(false);
   const verifiedToken = useRef('');
-  const isAdminRoute = routePath === '/admin';
-
-  // Lagging mouse cursor glow coordinates
-  const cursorGlowRef = useRef(null);
-  const mousePosRef = useRef({ x: 0, y: 0 });
-  const trailPosRef = useRef({ x: 0, y: 0 });
+  const isAdminRoute = /^\/admin\/?$/.test(routePath);
 
   useEffect(() => {
     const syncRoute = () => setRoutePath(window.location.pathname);
@@ -272,55 +74,74 @@ const App = () => {
     [adminToken]
   );
 
-  const fetchProducts = useCallback(async () => {
-    if (isAdminRoute && !adminVerified) return;
+  const fetchStorefront = useCallback(async () => {
+    if (isAdminRoute || storefrontRequest.current) return;
+    const request = new AbortController();
+    storefrontRequest.current = request;
+    setCatalogueError('');
     try {
-      const response = await api.get(isAdminRoute ? '/api/admin/products' : '/api/products', {
-        headers: isAdminRoute ? authHeaders : undefined
-      });
-
-      if (Array.isArray(response.data)) {
-        setProducts(response.data);
-        if (!isAdminRoute) localStorage.setItem('omans_products_cache', JSON.stringify(response.data));
+      let storefrontData;
+      try {
+        ({ data: storefrontData } = await api.get('/api/storefront/catalogue', { signal: request.signal }));
+      } catch (error) {
+        if (error.response?.status !== 404) throw error;
+        // Older backends can still serve the published storefront during cutover.
+        const [{ data: products }, { data: settings }] = await Promise.all([
+          api.get('/api/products', { signal: request.signal }),
+          api.get('/api/settings', { signal: request.signal })
+        ]);
+        storefrontData = { products, settings, bestSellers: [] };
       }
-    } catch (err) {
-      console.warn('Backend product fetch failed:', err.response?.data || err.message, err);
+      if (request.signal.aborted) return;
+      if (!Array.isArray(storefrontData?.products) || !storefrontData.settings) throw new Error('Invalid catalogue response.');
+      const { momoNumber, momoAccountName, ...publicSettings } = storefrontData.settings;
+      setBrandSettings({ ...DEFAULT_BRAND_SETTINGS, ...publicSettings });
+      setProducts(storefrontData.products);
+      setSelectedProduct(current => current ? storefrontData.products.find(product =>
+        String(product.id) === String(current.id)) ?? null : null);
+      setBestSellers(storefrontData.bestSellers || []);
+      setCatalogueLoaded(true);
+    } catch {
+      if (request.signal.aborted) return;
+      setProducts([]);
+      setBestSellers([]);
+      setSelectedProduct(null);
+      setCatalogueError('The catalogue could not be loaded. Try again.');
+    } finally {
+      if (storefrontRequest.current === request) storefrontRequest.current = null;
     }
-  }, [adminVerified, authHeaders, isAdminRoute]);
-
-  // Initialize and load products from REST API
-  useEffect(() => {
-    fetchProducts();
-  }, [fetchProducts]);
-
-  const fetchBrandSettings = useCallback(async () => {
-    if (isAdminRoute && !adminVerified) return;
-    try {
-      const response = await api.get(isAdminRoute ? '/api/admin/settings' : `/api/settings?_=${Date.now()}`, {
-        headers: isAdminRoute ? authHeaders : undefined
-      });
-      if (response.data && typeof response.data === 'object') {
-        const nextSettings = { ...DEFAULT_BRAND_SETTINGS, ...response.data };
-        setBrandSettings(nextSettings);
-        if (!isAdminRoute) localStorage.setItem('omans_brand_settings_cache', JSON.stringify(nextSettings));
-      }
-    } catch (err) {
-      console.warn('Brand settings fetch failed:', err.response?.data?.error || err.message);
-    }
-  }, [adminVerified, authHeaders, isAdminRoute]);
-
-  useEffect(() => {
-    fetchBrandSettings();
-  }, [fetchBrandSettings]);
+  }, [isAdminRoute]);
 
   useEffect(() => {
     if (isAdminRoute) return;
-    const controller = new AbortController();
-    api.get('/api/storefront/best-sellers', { signal: controller.signal })
-      .then(({ data }) => setBestSellers(Array.isArray(data) ? data : []))
-      .catch(() => {});
-    return () => controller.abort();
-  }, [isAdminRoute]);
+    fetchStorefront();
+    window.addEventListener('focus', fetchStorefront);
+    return () => {
+      storefrontRequest.current?.abort();
+      storefrontRequest.current = null;
+      window.removeEventListener('focus', fetchStorefront);
+    };
+  }, [fetchStorefront, isAdminRoute]);
+
+  const fetchBrandSettings = useCallback(async (signal, resetForm = false) => {
+    if (!isAdminRoute || !adminVerified) return;
+    setAdminSettingsState(current => current === 'ready' && !resetForm ? current : 'loading');
+    try {
+      const { data } = await api.get('/api/admin/settings', { headers: authHeaders, signal });
+      if (signal?.aborted) return;
+      if (!data || typeof data !== 'object') throw new Error('Invalid store settings.');
+      setBrandSettings({ ...DEFAULT_BRAND_SETTINGS, ...data });
+      setAdminSettingsState('ready');
+    } catch {
+      if (!signal?.aborted) setAdminSettingsState('error');
+    }
+  }, [adminVerified, authHeaders, isAdminRoute]);
+
+  useEffect(() => {
+    const request = new AbortController();
+    fetchBrandSettings(request.signal);
+    return () => request.abort();
+  }, [fetchBrandSettings]);
 
   const storefront = brandSettings.storefront || DEFAULT_BRAND_SETTINGS.storefront;
   const currentCollection = visibleCollections(storefront).some(([key]) => key === collection) ? collection : '';
@@ -367,51 +188,6 @@ const App = () => {
     verifyAdmin();
   }, [adminToken, authHeaders, isAdminRoute]);
 
-  // Custom Cursor Glow Position tracking
-  useEffect(() => {
-    if (!window.matchMedia('(pointer: fine)').matches) return undefined;
-
-    const handleMouseMove = (e) => {
-      mousePosRef.current = { x: e.clientX, y: e.clientY };
-    };
-    window.addEventListener('mousemove', handleMouseMove);
-    return () => window.removeEventListener('mousemove', handleMouseMove);
-  }, []);
-
-  // Lag ease coordinate updater
-  useEffect(() => {
-    if (!window.matchMedia('(pointer: fine)').matches) return undefined;
-
-    let animationFrameId;
-    const easeCursor = () => {
-      const trailPos = trailPosRef.current;
-      const mousePos = mousePosRef.current;
-      const dx = mousePos.x - trailPos.x;
-      const dy = mousePos.y - trailPos.y;
-      const nextTrailPos = {
-        x: trailPos.x + dx * 0.1,
-        y: trailPos.y + dy * 0.1
-      };
-
-      trailPosRef.current = nextTrailPos;
-      if (cursorGlowRef.current) {
-        cursorGlowRef.current.style.transform = `translate3d(${nextTrailPos.x}px, ${nextTrailPos.y}px, 0) translate(-50%, -50%)`;
-      }
-
-      animationFrameId = requestAnimationFrame(easeCursor);
-    };
-    easeCursor();
-    return () => cancelAnimationFrame(animationFrameId);
-  }, []);
-
-  // Luxury startup loading window
-  useEffect(() => {
-    const delay = setTimeout(() => {
-      setLoading(false);
-    }, 900);
-    return () => clearTimeout(delay);
-  }, []);
-
   // A cart line identifies both the product and the selected variant.
   const updateCart = useCallback((update) => {
     setCart(previous => {
@@ -452,6 +228,7 @@ const App = () => {
 
   const openCheckout = useCallback(() => {
     setCheckoutReceipt(null);
+    setCheckoutStarted(true);
     setIsCartOpen(false);
     setIsCheckoutOpen(true);
   }, []);
@@ -474,26 +251,8 @@ const App = () => {
     updateCart(previous => previous
       .map(item => ({ ...item, quantity: item.quantity - (purchased.get(cartKey(item)) || 0) }))
       .filter(item => item.quantity > 0));
-  }, [updateCart]);
-
-  // Admin database callback triggers
-  const handleProductAdded = useCallback((newProd) => {
-    setProducts(prev => [...prev, newProd]);
-  }, []);
-
-  const handleProductUpdated = useCallback((updatedProd) => {
-    setProducts(prev => prev.map(p => p.id === updatedProd.id ? updatedProd : p));
-    if (selectedProduct && selectedProduct.id === updatedProd.id) {
-      setSelectedProduct(updatedProd);
-    }
-  }, [selectedProduct]);
-
-  const handleProductDeleted = useCallback((id) => {
-    setProducts(prev => prev.filter(p => p.id !== id));
-    if (selectedProduct && selectedProduct.id === id) {
-      setSelectedProduct(null);
-    }
-  }, [selectedProduct]);
+    fetchStorefront();
+  }, [updateCart, fetchStorefront]);
 
   const handleAdminLogin = useCallback((token) => {
     verifiedToken.current = token;
@@ -507,6 +266,7 @@ const App = () => {
     localStorage.removeItem('omans_admin_token');
     setAdminToken('');
     setAdminVerified(false);
+    setAdminSettingsState('loading');
     navigateToStorefront();
   }, []);
 
@@ -527,8 +287,8 @@ const App = () => {
     const text = encodeURIComponent(
       `Hello ${brandSettings.brandName}! I am seeking a live consultation with a fragrance expert.`
     );
-    window.open(`https://wa.me/${brandSettings.whatsappNumber.replace(/\D/g, '')}?text=${text}`, '_blank');
-  }, [brandSettings.brandName, brandSettings.whatsappNumber]);
+    window.open(`https://wa.me/${(brandSettings.storefront?.contact?.whatsapp || brandSettings.whatsappNumber).replace(/\D/g, '')}?text=${text}`, '_blank');
+  }, [brandSettings.brandName, brandSettings.whatsappNumber, brandSettings.storefront]);
 
   const cartCount = useMemo(
     () => cart.reduce((acc, item) => acc + item.quantity, 0),
@@ -561,12 +321,7 @@ const App = () => {
     return (
       <>
         <SeoMeta products={products} brandSettings={brandSettings} isAdminRoute={isAdminRoute} />
-        <div
-          ref={cursorGlowRef}
-          className="cursor-glow hidden lg:block"
-        />
         <div className="min-h-screen bg-luxury-black text-luxury-champagne selection:bg-luxury-rosegold/30 selection:text-white">
-          <Particles />
           {adminChecking ? (
             <div className="relative z-10 min-h-screen flex items-center justify-center">
               <div className="text-center space-y-4">
@@ -588,17 +343,13 @@ const App = () => {
             }>
               {adminVerified && adminToken ? (
                 <AdminDashboard
-                  products={products}
                   token={adminToken}
                   onLogout={handleAdminLogout}
                   onAdminTokenUpdated={handleAdminLogin}
-                  onProductAdded={handleProductAdded}
-                  onProductUpdated={handleProductUpdated}
-                  onProductDeleted={handleProductDeleted}
-                  onProductsRefresh={fetchProducts}
                   brandSettings={brandSettings}
+                  adminSettingsState={adminSettingsState}
                   onBrandSettingsUpdated={handleBrandSettingsUpdated}
-                  onBrandSettingsRefresh={fetchBrandSettings}
+                  onBrandSettingsRefresh={() => fetchBrandSettings(undefined, true)}
                 />
               ) : (
                 <AdminLogin
@@ -616,33 +367,6 @@ const App = () => {
   return (
     <>
       <SeoMeta products={products} brandSettings={brandSettings} isAdminRoute={isAdminRoute} />
-      {/* 1. SECURE LAGGING CURSOR GLOW */}
-      <div 
-        ref={cursorGlowRef}
-        className="cursor-glow hidden lg:block" 
-      />
-
-      {/* 2. DYNAMIC LUXURY LOADING SCREEN */}
-      {loading ? (
-        <div className="fixed inset-0 z-[100] bg-luxury-black flex flex-col items-center justify-center space-y-6">
-          <div className="text-center space-y-2 animate-pulse">
-            <span className="text-[10px] tracking-[0.6em] uppercase font-bold text-luxury-rosegold block mb-1">ATELIER</span>
-            <h1 className="font-serif text-3xl sm:text-5xl tracking-[0.25em] text-white uppercase font-black">
-              {brandSettings.brandName}
-            </h1>
-          </div>
-          {/* Shimmer loading spinner */}
-          <div className="relative w-48 h-[1px] bg-white/10 overflow-hidden">
-            <div className="absolute top-0 left-0 w-1/3 h-full bg-gradient-to-r from-luxury-gold to-luxury-rosegold animate-infinite translate-x-[-100%]" style={{ animation: 'shimmer 1.5s infinite linear' }} />
-          </div>
-          <style>{`
-            @keyframes shimmer {
-              0% { transform: translateX(-100%); }
-              100% { transform: translateX(300%); }
-            }
-          `}</style>
-        </div>
-      ) : (
         <div className="min-h-screen bg-luxury-black text-luxury-champagne flex flex-col justify-between selection:bg-luxury-rosegold/30 selection:text-white">
           
           {/* 3. DYNAMIC INTERACTIVE BACKDROP CANVAS PARTICLES */}
@@ -667,6 +391,9 @@ const App = () => {
 
             <Catalog 
               products={products}
+              pending={!catalogueLoaded && !catalogueError}
+              error={catalogueError}
+              onReload={fetchStorefront}
               settings={storefront}
               collection={currentCollection}
               onCollectionChange={setCollection}
@@ -690,10 +417,12 @@ const App = () => {
           <Footer setActiveSection={handleNavigation} brandSettings={brandSettings} />
 
           {/* 8. IMMERSIVE PRODUCT DETAILS POP-UP MODAL */}
+          <Suspense fallback={<ModalLoading />}>
           {selectedProduct && (
             <ProductModal 
               key={selectedProduct.id}
               product={selectedProduct}
+              settings={storefront}
               relatedProducts={relatedProducts}
               onSelectProduct={setSelectedProduct}
               cart={cart}
@@ -704,10 +433,11 @@ const App = () => {
           )}
 
           {/* 9. SECURE SHOPPING CART SLIDING DRAWER */}
-          <CartDrawer 
+          {isCartOpen && <CartDrawer
             isOpen={isCartOpen}
             onClose={() => setIsCartOpen(false)}
             cartItems={cart}
+            currentProducts={catalogueLoaded && !catalogueError ? products : null}
             onUpdateQuantity={handleUpdateQuantity}
             onRemoveItem={handleRemoveItem}
             onCheckout={openCheckout}
@@ -715,21 +445,22 @@ const App = () => {
               setIsCartOpen(false);
               setIsCheckoutOpen(true);
             } : undefined}
-          />
+          />}
 
           {/* 10. CHECKOUT */}
-          <CheckoutModal 
+          {checkoutStarted && <CheckoutModal
             isOpen={isCheckoutOpen}
             onClose={() => setIsCheckoutOpen(false)}
             cartItems={cart}
             receipt={checkoutReceipt}
             onOrderSaved={handleOrderSaved}
-          />
+          />}
+          </Suspense>
 
           {/* 11. FLOATING WHATSAPP ASSISTANT BUTTON */}
           <button
             onClick={handleWhatsAppConsultation}
-            className="fixed bottom-6 right-6 z-40 p-4 bg-green-600 hover:bg-green-500 hover:scale-105 active:scale-95 text-white transition-all rounded-full shadow-lg shadow-green-900/30 flex items-center justify-center animate-bounce hover:animate-none"
+            className="fixed bottom-6 right-6 z-40 p-4 bg-green-600 hover:bg-green-500 hover:scale-105 active:scale-95 text-white transition-all rounded-full shadow-lg shadow-green-900/30 flex items-center justify-center"
             title="Chat with Concierge"
           >
             <svg 
@@ -742,7 +473,6 @@ const App = () => {
           </button>
 
         </div>
-      )}
     </>
   );
 };

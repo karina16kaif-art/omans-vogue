@@ -1,10 +1,12 @@
 import React from 'react';
 import { ShieldCheck, ArrowUp } from 'lucide-react';
+import { visibleCollections } from '../lib/catalogue';
 
 const Footer = ({ setActiveSection, brandSettings }) => {
-  const WHATSAPP_NUMBER = brandSettings?.whatsappNumber || '+233591259991';
+  const contact = brandSettings?.storefront?.contact;
+  const WHATSAPP_NUMBER = contact?.whatsapp || brandSettings?.whatsappNumber || '+233591259991';
   const brandName = brandSettings?.brandName || "OMAN'S VOGUE";
-  const INSTAGRAM_HANDLE = 'Eugeniaa..a';
+  const INSTAGRAM_HANDLE = contact?.instagram ?? 'Eugeniaa..a';
 
   const scrollToTop = () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -38,16 +40,11 @@ const Footer = ({ setActiveSection, brandSettings }) => {
         <div className="space-y-4">
           <h4 className="text-[10px] uppercase font-bold tracking-widest text-luxury-rosegold">COLLECTIONS</h4>
           <ul className="space-y-2 text-[11px] text-luxury-champagne/70 font-light">
-            {brandSettings?.storefront?.collectionVisibility?.women !== false && <li>
-              <button onClick={() => { setActiveSection('women'); document.getElementById('catalog').scrollIntoView({ behavior: 'smooth' }); }} className="hover:text-white transition-colors">
-                Women's Fragrances
+            {visibleCollections(brandSettings?.storefront).filter(([id]) => id === 'women' || id === 'men').map(([id, label]) => <li key={id}>
+              <button onClick={() => { setActiveSection(id); document.getElementById('catalog').scrollIntoView({ behavior: 'smooth' }); }} className="hover:text-white transition-colors">
+                {label}
               </button>
-            </li>}
-            {brandSettings?.storefront?.collectionVisibility?.men !== false && <li>
-              <button onClick={() => { setActiveSection('men'); document.getElementById('catalog').scrollIntoView({ behavior: 'smooth' }); }} className="hover:text-white transition-colors">
-                Men's Fragrances
-              </button>
-            </li>}
+            </li>)}
             <li>
               <button onClick={() => { setActiveSection('all-products'); document.getElementById('catalog').scrollIntoView({ behavior: 'smooth' }); }} className="hover:text-white transition-colors">
                 All Products Catalog
@@ -65,11 +62,11 @@ const Footer = ({ setActiveSection, brandSettings }) => {
                 Heritage Story
               </button>
             </li>
-            <li>
+            {INSTAGRAM_HANDLE && <li>
               <a href={`https://instagram.com/${INSTAGRAM_HANDLE}`} target="_blank" rel="noreferrer" className="hover:text-white transition-colors block">
                 Instagram Concierge Journal
               </a>
-            </li>
+            </li>}
             <li>
               <button onClick={() => { setActiveSection('contact'); document.getElementById('contact').scrollIntoView({ behavior: 'smooth' }); }} className="hover:text-white transition-colors">
                 Collaborations
@@ -83,17 +80,14 @@ const Footer = ({ setActiveSection, brandSettings }) => {
           <h4 className="text-[10px] uppercase font-bold tracking-widest text-luxury-rosegold">concierge</h4>
           <ul className="space-y-2 text-[11px] text-luxury-champagne/70 font-light">
             <li className="flex items-center justify-center md:justify-start gap-1">
-              <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-ping" />
-              <span>Live Support Online</span>
+              <span>WhatsApp support</span>
             </li>
             <li>
               <a href={`https://wa.me/${WHATSAPP_NUMBER.replace(/\D/g, '')}`} target="_blank" rel="noreferrer" className="text-white font-mono hover:text-luxury-gold transition-colors">
                 Concierge Hotline: {WHATSAPP_NUMBER}
               </a>
             </li>
-            <li>
-              <span className="text-[10px] text-luxury-champagne/40 block">Daily Dispatch: 8:00 AM - 9:00 PM</span>
-            </li>
+            {contact?.email && <li><a href={`mailto:${contact.email}`} className="break-all">{contact.email}</a></li>}
           </ul>
         </div>
 

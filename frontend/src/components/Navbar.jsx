@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { ShoppingBag, Menu, X, ShieldAlert } from 'lucide-react';
+import { visibleCollections } from '../lib/catalogue';
 
 const Navbar = ({ activeSection, setActiveSection, cartCount, onOpenCart, brandSettings }) => {
   const [isScrolled, setIsScrolled] = useState(false);
@@ -14,18 +15,18 @@ const Navbar = ({ activeSection, setActiveSection, cartCount, onOpenCart, brandS
         setIsScrolled(false);
       }
     };
-    window.addEventListener('scroll', handleScroll);
+    window.addEventListener('scroll', handleScroll, { passive: true });
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
   const navLinks = [
     { id: 'home', label: 'Home' },
-    { id: 'women', label: "Women's Fragrances" },
-    { id: 'men', label: "Men's Fragrances" },
+    ...visibleCollections(brandSettings?.storefront).filter(([id]) => id === 'women' || id === 'men')
+      .map(([id, label]) => ({ id, label })),
     { id: 'all-products', label: 'All Products' },
     { id: 'about', label: 'About' },
     { id: 'contact', label: 'Contact' },
-  ].filter(link => brandSettings?.storefront?.collectionVisibility?.[link.id] !== false);
+  ];
 
   const handleNavClick = (sectionId) => {
     setActiveSection(sectionId);
@@ -83,7 +84,7 @@ const Navbar = ({ activeSection, setActiveSection, cartCount, onOpenCart, brandS
         {/* Action Panel: Cart */}
         <div className="flex items-center gap-4">
           {/* Cart Trigger Button */}
-          <button 
+          <button
             onClick={onOpenCart}
             aria-label="Open cart"
             className="relative p-2.5 rounded-full border border-luxury-rosegold/10 hover:border-luxury-rosegold/30 hover:bg-luxury-charcoal/50 text-luxury-champagne hover:text-white transition-all duration-300 group"
@@ -98,7 +99,7 @@ const Navbar = ({ activeSection, setActiveSection, cartCount, onOpenCart, brandS
           </button>
 
           {/* Mobile Menu Toggle Button */}
-          <button 
+          <button aria-label={mobileMenuOpen ? 'Close navigation' : 'Open navigation'} aria-expanded={mobileMenuOpen}
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
             className="lg:hidden p-2.5 rounded-full border border-luxury-rosegold/10 text-luxury-champagne hover:text-white transition-all duration-300"
           >
@@ -108,7 +109,7 @@ const Navbar = ({ activeSection, setActiveSection, cartCount, onOpenCart, brandS
       </div>
 
       {/* Mobile Drawer Navigation Panel */}
-      <div 
+      <div inert={!mobileMenuOpen ? '' : undefined} aria-hidden={!mobileMenuOpen}
         className={`fixed inset-y-0 right-0 w-80 bg-luxury-black/98 backdrop-blur-xl border-l border-luxury-rosegold/10 z-40 transform transition-transform duration-500 ease-out shadow-2xl p-8 flex flex-col justify-between ${
           mobileMenuOpen ? 'translate-x-0' : 'translate-x-full'
         }`}

@@ -1,7 +1,8 @@
 const { randomUUID } = require('crypto');
-const { checkoutError, cleanText } = require('./checkout');
+const { checkoutError, cleanText, toE164 } = require('./checkout');
 
 const collections = ['women', 'men', 'unisex', 'bath-body-works', 'gift-sets', 'affordable', '100ml'];
+const collectionIds = (storefront) => storefront?.collectionDefinitions?.map(item => item.id) ?? collections;
 const homepageSections = ['collections', 'newArrivals', 'bestSellers', 'featured', 'gifts', 'fulfilment'];
 const fallbackImage = (category) => `/images/products/${category === 'Men' ? 'men' : 'women'}_placeholder.png`;
 
@@ -76,7 +77,7 @@ function normalizeImages(value) {
 
 const flag = (value) => value === true || value === 'true';
 
-function productPayload(body, current = {}) {
+function productPayload(body, current = {}, allowedCollections = collections) {
   const name = body.name === undefined ? current.name : text(body.name, 160, 'Product name');
   if (!name) invalid('Enter a product name.');
   // Keep the existing category column compatible with older catalogues. Collections drive shopping.
@@ -91,7 +92,9 @@ function productPayload(body, current = {}) {
   const salePrice = checkedSale(body.salePrice === undefined ? current.salePrice : body.salePrice, basePrice);
   let assigned = current.collections ?? null;
   if (body.collections !== undefined) {
-    if (!Array.isArray(body.collections) || body.collections.some(value => !collections.includes(value))) invalid('Choose valid collections.');
+    if (!Array.isArray(body.collections) || body.collections.length > 64 || body.collections.some(value => !allowedCollections.includes(value))) {
+      invalid('Choose valid collections.');
+    }
     assigned = [...new Set(body.collections)];
   }
   let images = current.images || [];
@@ -114,6 +117,8 @@ function productPayload(body, current = {}) {
     sizeMl: body.sizeMl === undefined ? current.sizeMl ?? null : optionalNumber(body.sizeMl, 0.01, 999999.99, 'Size'),
     stockQuantity: body.stockQuantity === undefined ? current.stockQuantity ?? null : optionalNumber(body.stockQuantity, 0, 2147483647, 'Stock quantity', true),
     enabled: flag(enabled),
+    published: body.published === undefined ? current.published !== false : flag(body.published),
+    bestsellerFeatured: body.bestsellerFeatured === undefined ? Boolean(current.bestsellerFeatured) : flag(body.bestsellerFeatured),
     featured: body.featured === undefined ? Boolean(current.featured) : flag(body.featured),
     newArrival: body.newArrival === undefined ? Boolean(current.newArrival) : flag(body.newArrival)
   };
@@ -137,8 +142,43 @@ function normalizeStorefront(value, previous = {}) {
   for (const key of collections) {
     if (value.collectionVisibility?.[key] !== undefined) visibility[key] = flag(value.collectionVisibility[key]);
   }
+  let collectionDefinitions = previous.collectionDefinitions;
+  if (value.collectionDefinitions !== undefined) {
+    if (!Array.isArray(value.collectionDefinitions) || value.collectionDefinitions.length > 64) invalid('Use up to 64 collections.');
+    const ids = new Set();
+    const names = new Set();
+    collectionDefinitions = value.collectionDefinitions.map(item => {
+      const id = item?.id;
+      const name = text(item?.name, 64, 'Collection name');
+      if (typeof id !== 'string' || (!collections.includes(id) && !/^custom-[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(id)) ||
+          !name || ids.has(id) || names.has(name.toLowerCase())) invalid('Enter a unique name for each collection.');
+      ids.add(id);
+      names.add(name.toLowerCase());
+      return { id, name, visible: item.visible !== false };
+    });
+  }
+  const contact = { ...previous.contact };
+  if (value.contact !== undefined) {
+    if (!value.contact || typeof value.contact !== 'object' || Array.isArray(value.contact)) invalid('Invalid contact settings.');
+    const { whatsapp, email, instagram } = value.contact;
+    if (whatsapp !== undefined) {
+      const number = toE164(whatsapp);
+      if (whatsapp !== '' && !number) invalid('Enter a valid WhatsApp support number with its country code.');
+      contact.whatsapp = number;
+    }
+    if (email !== undefined) {
+      const address = text(email, 254, 'Support email');
+      if (address && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address)) invalid('Enter a valid support email.');
+      contact.email = address;
+    }
+    if (instagram !== undefined) {
+      const handle = text(instagram, 30, 'Instagram handle').replace(/^@/, '');
+      if (handle && !/^[A-Za-z0-9._]+$/.test(handle)) invalid('Enter an Instagram username.');
+      contact.instagram = handle;
+    }
+  }
   return {
-    sections, collectionVisibility: visibility,
+    sections, collectionVisibility: visibility, collectionDefinitions, contact,
     affordableThreshold: value.affordableThreshold === undefined
       ? previous.affordableThreshold ?? null
       : optionalNumber(value.affordableThreshold, 0.01, 9999999.99, 'Affordable price threshold')
@@ -162,4 +202,4 @@ function publicProduct(product, admin = false) {
   };
 }
 
-module.exports = { productPayload, effectivePrice, publicProduct, productAvailable, normalizeStorefront, fallbackImage };
+module.exports = { productPayload, effectivePrice, publicProduct, productAvailable, normalizeStorefront, fallbackImage, collectionIds };

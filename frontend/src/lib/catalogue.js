@@ -5,8 +5,12 @@ export const collections = [
   ['bath-body-works', 'Bath & Body Works'],
   ['gift-sets', 'Gift Sets'],
   ['affordable', 'Affordable Fragrances'],
-  ['100ml', '100ml Collection']
+  ['100ml', '100ml Perfumes']
 ];
+
+export const collectionDefinitions = (settings) => settings?.collectionDefinitions ?? collections.map(([id, name]) => ({
+  id, name, visible: settings?.collectionVisibility?.[id] !== false
+}));
 
 export const homepageSections = [
   ['collections', 'Shop by Collection'],
@@ -34,15 +38,19 @@ export const assignedCollections = (product) => product.collections ?? ({
 }[product.category] || []);
 
 export function memberships(product, settings = {}) {
-  const result = new Set(assignedCollections(product));
-  if (optionsFor(product).some(option => Number(option.sizeMl) === 100)) result.add('100ml');
+  const definitions = settings.collectionDefinitions;
+  const defined = (id) => !definitions || definitions.some(collection => collection.id === id);
+  const result = new Set(assignedCollections(product).filter(defined));
+  if (defined('100ml') && optionsFor(product).some(option => Number(option.sizeMl) === 100)) result.add('100ml');
   if (settings.affordableThreshold != null && optionPrice(displayOption(product)) <= settings.affordableThreshold) {
-    result.add('affordable');
+    if (defined('affordable')) result.add('affordable');
   }
   return result;
 }
 
-export const visibleCollections = (settings) => collections.filter(([key]) => settings?.collectionVisibility?.[key] !== false);
-export const collectionLabel = (product) => collections.find(([key]) => assignedCollections(product).includes(key))?.[1] || product.brand || '';
+export const visibleCollections = (settings) => collectionDefinitions(settings).filter(({ visible }) => visible !== false)
+  .map(({ id, name }) => [id, name]);
+export const collectionLabel = (product, settings) => visibleCollections(settings)
+  .find(([key]) => assignedCollections(product).includes(key))?.[1] || product.brand || '';
 export const lineKey = (id, variantId) => `${id}:${variantId ?? ''}`;
 export const cartKey = (item) => lineKey(item.id, item.variantId);
