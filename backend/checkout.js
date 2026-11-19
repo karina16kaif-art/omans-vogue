@@ -150,28 +150,7 @@ function buildQuote(quantities, products, settings, { payment = true } = {}) {
     campusDestinations, quoteKey: hash(quote), priceKey: cartPriceKey(items) };
 }
 
-function buildWhatsAppMessage(order) {
-  return [
-    `Hello, I’d like to submit order *${order.id}*.`,
-    `Customer: ${order.customerName}`,
-    `Phone: ${order.customerPhone}`,
-    '',
-    '*Products*',
-    ...order.items.map(item => `• ${item.quantity} × ${item.name}${item.variantLabel ? ` (${item.variantLabel})` : ''} @ ${formatCurrency(item.unitPrice)} = ${formatCurrency(item.unitPrice * item.quantity)}`),
-    '',
-    `Fulfilment: ${({ delivery: 'Campus delivery', outside_campus: 'Outside-campus delivery', pickup: 'Pickup' })[order.fulfilmentMethod]}`,
-    order.fulfilmentMethod !== 'pickup'
-      ? `Delivery address: ${order.deliveryAddress}`
-      : `Pickup location: ${order.pickupLocation}`,
-    `Delivery fee: ${formatCurrency(order.deliveryFee)}`,
-    `Total: ${formatCurrency(order.totalAmount)}`,
-    `MoMo phone: ${order.momoPhone}`,
-    `Payment reference: ${order.paymentReference}`,
-    'Please verify my Mobile Money payment.'
-  ].join('\n');
-}
-
 module.exports = {
   campus, campusDeliveryFee, pickupLocation, cleanText, toE164, toGhanaPhone, toPesewas, formatCurrency,
-  hash, cartPriceKey, checkoutError, parseItems, parseOrder, buildQuote, buildWhatsAppMessage
+  hash, cartPriceKey, checkoutError, parseItems, parseOrder, buildQuote
 };

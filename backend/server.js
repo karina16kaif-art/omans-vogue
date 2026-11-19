@@ -10,10 +10,14 @@ const sharp = require('sharp');
 const crypto = require('crypto');
 const createAdminAuth = require('./admin-auth');
 const createDeliveryQuotes = require('./delivery-quotes');
+const {
+  ORDER_STATUSES, PENDING_STATUSES, orderStatus, orderNumber, isVerified: isConfirmedPaid,
+  canVerifyPayment, allowedStatuses, productSubtotal, whatsappUrl, buildWhatsAppMessage, customerMessage
+} = require('./order-workflow');
 const { productPayload, publicProduct, productAvailable, normalizeStorefront, fallbackImage, collectionIds } = require('./catalogue');
 const {
-  campus, campusDeliveryFee, pickupLocation, cleanText, toE164, toGhanaPhone, toPesewas, formatCurrency,
-  hash, checkoutError, parseItems, parseOrder, buildQuote, buildWhatsAppMessage
+  campus, campusDeliveryFee, pickupLocation, cleanText, toE164, toGhanaPhone, toPesewas,
+  hash, checkoutError, parseItems, parseOrder, buildQuote
 } = require('./checkout');
 let nodemailer = null;
 
@@ -26,6 +30,7 @@ try {
 const app = express();
 const PORT = process.env.PORT || 5001;
 const isProduction = process.env.NODE_ENV === 'production';
+const cutoverPaused = isProduction && process.env.MERCHANT_WORKFLOW_CUTOVER_PAUSED !== 'false';
 const checkoutEnabled = isProduction
   ? process.env.CHECKOUT_ENABLED === 'true'
   : process.env.CHECKOUT_ENABLED !== 'false';
@@ -37,8 +42,6 @@ const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || 'https://omansvogue.netlify.a
 const ADMIN_NOTIFICATION_EMAIL = process.env.ADMIN_NOTIFICATION_EMAIL || '';
 const GMAIL_USER = process.env.GMAIL_USER || '';
 const GMAIL_APP_PASSWORD = process.env.GMAIL_APP_PASSWORD || '';
-const ADMIN_WHATSAPP_NUMBER = process.env.ADMIN_WHATSAPP_NUMBER || '';
-const WHATSAPP_ALERT_WEBHOOK_URL = process.env.WHATSAPP_ALERT_WEBHOOK_URL || '';
 const SUPABASE_URL = (process.env.SUPABASE_URL || '').replace(/\/+$/, '');
 const SUPABASE_SERVER_KEY = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 const CLOUDINARY_CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME || '';
@@ -86,12 +89,19 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
-app.use(bodyParser.json({ limit: '10mb' }));
-app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
 app.use('/api', (req, res, next) => {
   res.set('Cache-Control', 'no-store');
+  const readOnlySignIn = req.method === 'POST' && /^\/auth\/login\/?$/i.test(req.path);
+  if (cutoverPaused && !['GET', 'HEAD', 'OPTIONS'].includes(req.method) && !readOnlySignIn) {
+    return res.status(503).json({
+      code: 'omans_cutover_paused',
+      error: 'Checkout and order updates are temporarily paused. Please try again later.'
+    });
+  }
   next();
 });
+app.use(bodyParser.json({ limit: '10mb' }));
+app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
 
 // Paths
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
@@ -207,7 +217,7 @@ const supabaseRequest = async (resource, options = {}) => {
 
 const { authenticateAdmin, login, changePassword } = createAdminAuth({
   username: ADMIN_USERNAME,
-  bootstrapPassword,
+  bootstrapPassword: cutoverPaused ? '' : bootstrapPassword,
   secret: JWT_SECRET,
   dataDir: DATA_DIR,
   isSupabaseConfigured,
@@ -260,10 +270,12 @@ const localProduct = (product) => ({
 });
 
 // Cast the ID in PostgreSQL before JSON parsing to preserve the full bigint range.
-const ORDER_PROJECTION = 'select=*,order_id_text:id::text';
+const ORDER_PROJECTION = 'select=*,order_id_text:id::text,order_number_text:order_number::text';
 
 const mapOrderFromDb = (row) => ({
   id: row.order_id_text,
+  orderNumber: orderNumber(row.order_number_text),
+  deliveryQuoteId: row.delivery_quote_id,
   customerName: row.customer_name,
   customerPhone: row.customer_phone,
   customerEmail: row.customer_email,
@@ -280,11 +292,8 @@ const mapOrderFromDb = (row) => ({
   deliveryFee: row.delivery_fee == null ? null : Number(row.delivery_fee),
   momoPhone: row.momo_phone,
   paymentReference: row.payment_reference,
-  orderStatus: orderStatus(
-    !row.checkout_request_id && orderStatus(row.status) === 'Pending'
-      ? row.order_status ?? row.status
-      : row.status ?? row.order_status
-  ),
+  orderStatus: orderStatus(row.merchant_status ?? (row.status ?? row.order_status)),
+  history: row.merchant_history || [],
   createdAt: row.created_at,
   updatedAt: row.updated_at
 });
@@ -500,11 +509,6 @@ const normalizeCategory = (category) => {
   return '';
 };
 
-const ORDER_STATUSES = ['Pending', 'Processing', 'Delivered', 'Cancelled'];
-const LEGACY_ORDER_STATUSES = ['New', 'Out for Delivery'];
-const ACCEPTED_ORDER_STATUSES = [...ORDER_STATUSES, ...LEGACY_ORDER_STATUSES];
-const isConfirmedPaid = (order) => order.paymentStatus === 'Paid' && Boolean(order.paymentVerifiedAt);
-
 const unverifiedPaymentStatus = (row) => {
   if (row.checkout_request_id) return 'Pending';
   const status = cleanText(row.payment_status ?? row.status).toLowerCase();
@@ -543,7 +547,7 @@ const getBrandSettings = async ({ strict = false } = {}) => {
       if (settings) return { ...DEFAULT_BRAND_SETTINGS, ...settings };
 
       if (strict) throw new Error('The storefront settings row is missing.');
-      await saveBrandSettings(DEFAULT_BRAND_SETTINGS);
+      if (!cutoverPaused) await saveBrandSettings(DEFAULT_BRAND_SETTINGS);
       return { ...DEFAULT_BRAND_SETTINGS };
     } catch (error) {
       if (strict) throw error;
@@ -618,25 +622,6 @@ const normalizeBrandPayload = (body, storefront) => {
   return updates;
 };
 
-const buildOrderNotificationText = (order) => {
-  const items = Array.isArray(order.items) ? order.items : [];
-  const lines = [
-    `New OMAN'S VOGUE order: ${order.id}`,
-    `Customer: ${order.customerName}`,
-    `Phone: ${order.customerPhone}`,
-    `Fulfilment: ${order.fulfilmentMethod}`,
-    order.fulfilmentMethod === 'pickup'
-      ? `Pickup: ${order.pickupLocation}`
-      : `Delivery: ${order.deliveryAddress}`,
-    `Total: ${formatCurrency(order.totalAmount)}`,
-    `Payment: ${order.paymentMethod} (${order.paymentStatus})`,
-    `Status: ${order.orderStatus}`,
-    'Items:',
-    ...items.map(item => `- ${item.quantity}x ${item.name} (${item.category}) @ ${formatCurrency(item.unitPrice)}`)
-  ];
-  return lines.join('\n');
-};
-
 const sendGmailOrderNotification = async (order) => {
   if (!nodemailer || !GMAIL_USER || !GMAIL_APP_PASSWORD || !ADMIN_NOTIFICATION_EMAIL) {
     return;
@@ -653,47 +638,9 @@ const sendGmailOrderNotification = async (order) => {
   await transporter.sendMail({
     from: `"OMAN'S VOGUE Orders" <${GMAIL_USER}>`,
     to: ADMIN_NOTIFICATION_EMAIL,
-    subject: `New OMAN'S VOGUE Order ${order.id}`,
-    text: buildOrderNotificationText(order)
+    subject: `Oman's Parfum order ${order.orderNumber || order.id}`,
+    text: buildWhatsAppMessage(order).replace(/\*/g, '')
   });
-};
-
-const sendWhatsAppOrderNotification = async (order) => {
-  if (!WHATSAPP_ALERT_WEBHOOK_URL) {
-    return;
-  }
-
-  const { momoPhone, paymentReference, customerEmail, ...alertOrder } = order;
-  await fetch(WHATSAPP_ALERT_WEBHOOK_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      to: ADMIN_WHATSAPP_NUMBER,
-      orderId: order.id,
-      message: buildOrderNotificationText(order),
-      order: alertOrder
-    })
-  });
-};
-
-const notifyAdminNewOrder = (order) => {
-  Promise.allSettled([
-    sendGmailOrderNotification(order),
-    sendWhatsAppOrderNotification(order)
-  ]).then((results) => {
-    results.forEach((result) => {
-      if (result.status === 'rejected') {
-        console.warn('[Oman’s Vogue Server] Order notification failed:', result.reason?.message || result.reason);
-      }
-    });
-  });
-};
-
-const orderStatus = (status) => {
-  const normalized = cleanText(status).toLowerCase().replace(/[-_]/g, ' ');
-  if (normalized === 'out for delivery') return 'Processing';
-  if (normalized === 'canceled') return 'Cancelled';
-  return ORDER_STATUSES.find(value => value.toLowerCase() === normalized) || 'Pending';
 };
 
 const statusForDb = (status, current) => {
@@ -707,7 +654,7 @@ const dateRanges = (now = new Date()) => ({
   startOfMonth: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))
 });
 
-const buildOrderAnalytics = (orders, products) => {
+const buildOrderAnalytics = (orders, products, requests = []) => {
   const now = new Date();
   const year = now.getUTCFullYear();
   const { startOfToday, startOfMonth } = dateRanges(now);
@@ -727,6 +674,7 @@ const buildOrderAnalytics = (orders, products) => {
     if (created.getUTCFullYear() === year) monthlyRevenue[created.getUTCMonth()].orders += 1;
     ordersByStatus[orderStatus(order.orderStatus)] += 1;
   }
+  for (const request of requests) ordersByStatus[orderStatus(request.orderStatus)] += 1;
 
   for (const order of paidOrders) {
     const verified = new Date(order.paymentVerifiedAt);
@@ -761,11 +709,12 @@ const buildOrderAnalytics = (orders, products) => {
     totalRevenue: revenue(paidOrders),
     revenueToday: revenue(paidOrders.filter(order => new Date(order.paymentVerifiedAt) >= startOfToday)),
     revenueThisMonth: revenue(paidOrders.filter(order => new Date(order.paymentVerifiedAt) >= startOfMonth)),
-    pendingOrders: ordersByStatus.Pending,
+    pendingOrders: orders.filter(order => PENDING_STATUSES.includes(orderStatus(order.orderStatus))).length,
+    pendingRequests: requests.filter(request => request.orderStatus !== 'Cancelled').length,
     pendingPayments: orders.filter(order => !isConfirmedPaid(order) && orderStatus(order.orderStatus) !== 'Cancelled' &&
       ['Pending', 'Paid'].includes(order.paymentStatus)).length,
     paidOrders: paidOrders.length,
-    deliveredOrders: ordersByStatus.Delivered,
+    deliveredOrders: paidOrders.filter(order => orderStatus(order.orderStatus) === 'Delivered').length,
     cancelledOrders: ordersByStatus.Cancelled,
     bestSellingPerfume: bestSellingProducts[0] || null,
     bestSellingProducts,
@@ -780,6 +729,7 @@ const buildOrderAnalytics = (orders, products) => {
 app.get('/api/health', (req, res) => {
   res.json({
     ok: true,
+    cutoverPaused,
     service: 'omans-vogue-api',
     environment: process.env.NODE_ENV || 'development'
   });
@@ -1112,6 +1062,13 @@ app.patch('/api/admin/delivery-quotes/:id/approval', authenticateAdmin, route(as
   res.json(await deliveryQuotes.approveQuote(req.params.id, req.body?.deliveryFee));
 }));
 
+app.patch('/api/admin/delivery-quotes/:id/status', authenticateAdmin, route(async (req, res) => {
+  requireCheckoutStorage();
+  if (!ORDER_STATUSES.includes(req.body?.orderStatus)) throw checkoutError(400, 'Invalid order status.');
+  const request = await deliveryQuotes.updatePurchaseStatus(req.params.id, req.body.orderStatus);
+  return request ? res.json(request) : res.status(404).json({ error: 'Purchase request not found.' });
+}));
+
 const findCheckout = async (requestId) => {
   const rows = await supabaseRequest(`orders?${ORDER_PROJECTION}&checkout_request_id=eq.${requestId}&limit=1`);
   return rows[0];
@@ -1122,15 +1079,23 @@ const findQuotedOrder = async (quoteId) => {
   return row;
 };
 
-const checkoutReceipt = (row, requestHash) => {
+const attachPurchaseDetails = (order, purchase) => ({
+  ...order,
+  ...(purchase ? { area: purchase.area, address: purchase.address, landmark: purchase.landmark,
+    requestedAt: purchase.createdAt, history: [...purchase.history, ...order.history] } : {})
+});
+
+const checkoutReceipt = (row, requestHash, approved) => {
   if (row.checkout_request_hash !== requestHash) {
     throw checkoutError(409, 'This submission was already used for different order details.');
   }
-  const order = mapOrderFromDb(row);
-  const number = row.whatsapp_number.slice(1);
+  const order = attachPurchaseDetails(mapOrderFromDb(row), approved ? { ...approved, createdAt: approved.created_at, history: [] } : null);
   return {
     orderId: order.id,
-    whatsappUrl: `https://wa.me/${number}?text=${encodeURIComponent(buildWhatsAppMessage(order))}`
+    orderNumber: order.orderNumber,
+    orderStatus: order.orderStatus,
+    paymentStatus: isConfirmedPaid(order) ? 'Paid' : 'Pending',
+    whatsappUrl: whatsappUrl(row.whatsapp_number, buildWhatsAppMessage(order))
   };
 };
 
@@ -1138,7 +1103,7 @@ app.post('/api/checkout/delivery-quotes/resume', route(async (req, res) => {
   requireCheckoutStorage();
   const approved = await deliveryQuotes.fromToken(req.body?.deliveryQuoteToken);
   const saved = await findQuotedOrder(approved.id);
-  res.json(saved ? { receipt: checkoutReceipt(saved, saved.checkout_request_hash) } : {
+  res.json(saved ? { receipt: checkoutReceipt(saved, saved.checkout_request_hash, approved) } : {
     quote: await deliveryQuotes.payableQuote(approved)
   });
 }));
@@ -1155,7 +1120,7 @@ app.post('/api/orders', route(async (req, res) => {
   const requestHash = hash(approved ? { ...submission, requestId: undefined, deliveryQuoteId: approved.id } : submission);
   const findSaved = async () => (approved ? await findQuotedOrder(approved.id) : null) || await findCheckout(submission.requestId);
   const existing = await findSaved();
-  if (existing) return res.json(checkoutReceipt(existing, requestHash));
+  if (existing) return res.json(checkoutReceipt(existing, requestHash, approved));
 
   const quote = approved ? await deliveryQuotes.payableQuote(approved) : await quoteCart(submission.items);
   if (quote.quoteKey !== submission.quoteKey) {
@@ -1208,18 +1173,20 @@ app.post('/api/orders', route(async (req, res) => {
         !/omans_orders_momo_reference_key|omans_orders_delivery_quote_key/.test(error.message)) throw error;
 
     const saved = await findSaved();
-    if (saved) return res.json(checkoutReceipt(saved, requestHash));
+    if (saved) return res.json(checkoutReceipt(saved, requestHash, approved));
     throw checkoutError(409, 'An order already used this Mobile Money reference. Use your saved WhatsApp receipt or contact support before paying again.');
   }
 
   if (!inserted) {
     const saved = await findSaved();
     if (!saved) throw new Error('Order receipt unavailable after insert');
-    return res.json(checkoutReceipt(saved, requestHash));
+    return res.json(checkoutReceipt(saved, requestHash, approved));
   }
 
-  notifyAdminNewOrder(mapOrderFromDb(inserted));
-  return res.status(201).json(checkoutReceipt(inserted, requestHash));
+  sendGmailOrderNotification(mapOrderFromDb(inserted)).catch(() => {
+    console.warn('[Oman’s Vogue Server] An order email notification failed.');
+  });
+  return res.status(201).json(checkoutReceipt(inserted, requestHash, approved));
 }));
 
 const filterOrders = (orders, { period, paymentStatus, orderStatus: status }) => {
@@ -1240,30 +1207,58 @@ const filterOrders = (orders, { period, paymentStatus, orderStatus: status }) =>
   return orders;
 };
 
-// The order list and analytics can share the same fresh order snapshot.
+const getMerchantOrders = async () => {
+  const [orders, purchases] = await Promise.all([getOrders(), isSupabaseConfigured() ? deliveryQuotes.readPurchases() : []]);
+  const byId = new Map(purchases.map(request => [request.id, request]));
+  const saved = orders.map(order => {
+    const purchase = byId.get(order.deliveryQuoteId);
+    if (purchase) byId.delete(purchase.id);
+    const record = attachPurchaseDetails({ ...order, orderStatus: orderStatus(order.orderStatus), history: order.history || [] }, purchase);
+    return {
+      ...record, subtotal: productSubtotal(record.items || []), allowedStatuses: allowedStatuses(record),
+      canVerifyPayment: canVerifyPayment(record), customerWhatsappUrl: whatsappUrl(record.customerPhone, customerMessage(record))
+    };
+  });
+  return { orders: saved, requests: [...byId.values()] };
+};
+
 app.get('/api/orders', authenticateAdmin, route(async (req, res) => {
-  if (req.query.includeAnalytics !== 'true') return res.json(filterOrders(await getOrders(), req.query));
-  const [orders, products] = await Promise.all([getOrders(), getProducts()]);
-  res.json({ orders: filterOrders(orders, req.query), analytics: buildOrderAnalytics(orders, products) });
+  const [{ orders, requests }, products] = await Promise.all([
+    getMerchantOrders(), req.query.includeAnalytics === 'true' ? getProducts() : []
+  ]);
+  const records = req.query.includePurchases === 'true' ? [...orders, ...requests]
+    .sort((a, b) => Date.parse(b.requestedAt || b.createdAt) - Date.parse(a.requestedAt || a.createdAt)) : orders;
+  const filtered = filterOrders(records, req.query);
+  if (req.query.includeAnalytics !== 'true') return res.json(filtered);
+  res.json({ orders: filtered, analytics: buildOrderAnalytics(orders, products, requests) });
 }));
 
 app.get(['/api/orders/analytics', '/api/analytics'], authenticateAdmin, route(async (req, res) => {
-  const [orders, products] = await Promise.all([getOrders(), getProducts()]);
-  res.json(buildOrderAnalytics(orders, products));
+  const [{ orders, requests }, products] = await Promise.all([getMerchantOrders(), getProducts()]);
+  res.json(buildOrderAnalytics(orders, products, requests));
 }));
 
-const updateOrder = async (id, changes, verifyPayment = false) => {
+const updateOrder = async (id, nextStatus, verifyPayment = false) => {
+  const now = new Date().toISOString();
+  const validate = (order) => {
+    if (verifyPayment && !canVerifyPayment(order)) throw checkoutError(409, 'A saved payment reference is required and cancelled orders cannot be verified.');
+    if (!verifyPayment && !allowedStatuses(order).includes(nextStatus)) throw checkoutError(409, 'This status is unavailable for the current order. Check its payment status and fulfilment step.');
+  };
   if (!isSupabaseConfigured()) {
     const orders = readJsonFile(ORDERS_FILE, []);
     const index = orders.findIndex(order => String(order.id) === id);
     if (index === -1) return null;
     if (verifyPayment && isConfirmedPaid(orders[index])) return orders[index];
-    const { status, admin_payment_verified_at, updated_at } = changes;
+    const current = { ...orders[index], orderStatus: orderStatus(orders[index].orderStatus) };
+    validate(current);
+    if (!verifyPayment && current.orderStatus === nextStatus) return current;
     const order = {
-      ...orders[index],
-      ...(status ? { orderStatus: status } : {}),
-      ...(admin_payment_verified_at ? { paymentStatus: 'Paid', paymentVerifiedAt: admin_payment_verified_at } : {}),
-      updatedAt: updated_at
+      ...current,
+      ...(verifyPayment ? { paymentStatus: 'Paid', paymentVerifiedAt: now } : { orderStatus: nextStatus }),
+      history: [...(current.history || []), verifyPayment
+        ? { kind: 'payment', from: 'Unverified', to: 'Verified', actor: 'merchant', at: now }
+        : { kind: 'status', from: current.orderStatus, to: nextStatus, actor: 'merchant', at: now }],
+      updatedAt: now
     };
     orders[index] = order;
     if (!writeJsonFile(ORDERS_FILE, orders)) throw new Error('Failed to update local orders');
@@ -1276,38 +1271,32 @@ const updateOrder = async (id, changes, verifyPayment = false) => {
 
   const filter = new URLSearchParams({ id: `eq.${id}` });
   const resource = `orders?${ORDER_PROJECTION}&${filter}`;
-  if (changes.status || verifyPayment) {
-    const [current] = await supabaseRequest(`orders?${filter}&select=status,order_status,payment_status&limit=1`);
-    if (!current) return null;
-    if (changes.status) {
-      changes = {
-        ...changes,
-        order_status: statusForDb(changes.status, current.order_status || 'Pending'),
-        status: statusForDb(changes.status, current.status)
-      };
-    } else {
-      changes = { ...changes, payment_status: statusForDb('Paid', current.payment_status || 'Pending') };
-    }
-  }
+  const [row] = await supabaseRequest(`${resource}&limit=1`);
+  if (!row) return null;
+  const current = mapOrderFromDb(row);
+  if ((verifyPayment && isConfirmedPaid(current)) || (!verifyPayment && nextStatus === current.orderStatus)) return current;
+  validate(current);
 
-  const [updated] = await supabaseRequest(`${resource}${verifyPayment ? '&admin_payment_verified_at=is.null' : ''}`, {
+  const changes = verifyPayment
+    ? { admin_payment_verified_at: now, payment_status: statusForDb('Paid', row.payment_status || 'Pending'), updated_at: now }
+    : { merchant_status: nextStatus, updated_at: now };
+  const [updated] = await supabaseRequest(`${resource}&merchant_status=eq.${encodeURIComponent(row.merchant_status)}${verifyPayment ? '&admin_payment_verified_at=is.null' : ''}`, {
     method: 'PATCH',
     headers: { Prefer: 'return=representation' },
     body: JSON.stringify(changes)
   });
   if (updated) return mapOrderFromDb(updated);
-  if (!verifyPayment) return null;
-
   const [existing] = await supabaseRequest(`${resource}&limit=1`);
-  return existing ? mapOrderFromDb(existing) : null;
+  if (verifyPayment && existing?.admin_payment_verified_at) return mapOrderFromDb(existing);
+  throw checkoutError(409, 'The order changed. Refresh Orders and try again.');
 };
 
 app.patch('/api/orders/:id/status', authenticateAdmin, route(async (req, res) => {
   const nextStatus = cleanText(req.body?.orderStatus);
-  if (!ACCEPTED_ORDER_STATUSES.includes(nextStatus)) {
+  if (![...ORDER_STATUSES, 'Pending', 'New'].includes(nextStatus)) {
     return res.status(400).json({ error: 'Invalid order status.' });
   }
-  const order = await updateOrder(req.params.id, { status: orderStatus(nextStatus), updated_at: new Date().toISOString() });
+  const order = await updateOrder(req.params.id, orderStatus(nextStatus));
   return order ? res.json(order) : res.status(404).json({ error: 'Order not found.' });
 }));
 
@@ -1315,11 +1304,7 @@ app.patch('/api/orders/:id/payment', authenticateAdmin, route(async (req, res) =
   if (req.body?.paymentStatus !== 'Paid') {
     return res.status(400).json({ error: 'Confirm that you have verified the payment.' });
   }
-  const now = new Date().toISOString();
-  const order = await updateOrder(req.params.id, {
-    admin_payment_verified_at: now,
-    updated_at: now
-  }, true);
+  const order = await updateOrder(req.params.id, null, true);
   return order ? res.json(order) : res.status(404).json({ error: 'Order not found.' });
 }));
 
@@ -1349,7 +1334,10 @@ app.use((err, req, res, next) => {
     return res.status(409).json({ error: 'An item changed or sold out before the order could be saved. Review your cart.' });
   }
   if (err.message === 'omans_delivery_quote_invalid') {
-    return res.status(409).json({ error: 'The delivery quote is no longer valid. Contact the merchant before paying again.' });
+    return res.status(409).json({ error: 'The approved delivery request is no longer valid. Contact the merchant before paying again.' });
+  }
+  if (err.message === 'omans_workflow_invalid') {
+    return res.status(409).json({ error: 'This update conflicts with the current order or payment state. Refresh Orders and try again.' });
   }
   if (err.type === 'entity.parse.failed') return res.status(400).json({ error: 'Invalid JSON request.' });
   if (err.type === 'entity.too.large') return res.status(413).json({ error: 'Request is too large.' });
