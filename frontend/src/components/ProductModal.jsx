@@ -1,23 +1,21 @@
-import React from 'react';
-import { X, ShoppingBag, Send, AlertTriangle, Check } from 'lucide-react';
+import React, { useState } from 'react';
+import { X, ShoppingBag, Wallet, AlertTriangle, Check } from 'lucide-react';
 import { getAssetUrl, getWebPAssetUrl } from '../lib/api';
+import { cartKey, collectionLabel, currency, lineKey, optionAvailable, optionPrice } from '../lib/catalogue';
 
-const ProductModal = ({ product, onClose, onAddToCart, isInCart, brandSettings }) => {
-  if (!product) return null;
-
-  const WHATSAPP_NUMBER = brandSettings?.whatsappNumber || '+233591259991';
-  const brandName = brandSettings?.brandName || "Oman's Vogue";
-
-  const collectionLabel = product.category === 'Women' ? "Women's Collection" : "Men's Collection";
-  const productImageUrl = getAssetUrl(product.image);
-  const productWebPUrl = getWebPAssetUrl(product.image);
-
-  const handleWhatsAppOrder = () => {
-    const text = encodeURIComponent(
-      `Hello ${brandName}! I want to order ${product.name}. Price: GHS ${Number(product.price).toFixed(2)}. Category: ${collectionLabel}. Please confirm availability and payment details.`
-    );
-    window.open(`https://wa.me/${WHATSAPP_NUMBER.replace('+', '')}?text=${text}`, '_blank');
-  };
+const ProductModal = ({ product, relatedProducts, onSelectProduct, onClose, onAddToCart, onCheckout, cart }) => {
+  const variants = product.variants || [];
+  const [activeImage, setActiveImage] = useState(0);
+  const [variantId, setVariantId] = useState(() => variants.find(option => optionAvailable(product, option))?.id || variants[0]?.id);
+  const selectedVariant = variants.find(variant => variant.id === variantId);
+  const option = selectedVariant ?? product;
+  const available = optionAvailable(product, option) && (!variants.length || Boolean(selectedVariant));
+  const isInCart = cart.some(item => cartKey(item) === lineKey(product.id, selectedVariant?.id));
+  const images = product.images?.length ? product.images : [product.image];
+  const image = images[activeImage] || images[0];
+  const label = collectionLabel(product);
+  const productImageUrl = getAssetUrl(image);
+  const productWebPUrl = getWebPAssetUrl(image);
 
   // Split notes string if comma-separated
   const notesArray = product.notes ? product.notes.split(',').map(n => n.trim()) : [];
@@ -32,10 +30,12 @@ const ProductModal = ({ product, onClose, onAddToCart, isInCart, brandSettings }
 
       {/* Modal Container */}
       <div 
-        className="relative w-full max-w-4xl glass-panel-heavy border border-luxury-rosegold/20 rounded-none shadow-2xl overflow-hidden z-10 transform scale-95 md:scale-100 transition-transform duration-500 max-h-[90vh] flex flex-col md:flex-row"
+        role="dialog" aria-modal="true" aria-labelledby="product-title"
+        className="relative w-full max-w-4xl glass-panel-heavy border border-luxury-rosegold/20 shadow-2xl overflow-y-auto z-10 max-h-[90dvh] flex flex-col md:flex-row md:overflow-hidden"
       >
         {/* Close Button */}
         <button 
+          aria-label="Close product details"
           onClick={onClose}
           className="absolute top-4 right-4 z-30 p-2 bg-luxury-black/80 backdrop-blur-xs border border-luxury-rosegold/10 text-luxury-champagne/80 hover:text-white hover:border-luxury-rosegold/30 transition-all rounded-full"
         >
@@ -43,7 +43,8 @@ const ProductModal = ({ product, onClose, onAddToCart, isInCart, brandSettings }
         </button>
 
         {/* Column 1: Image Showcase */}
-        <div className="w-full md:w-1/2 aspect-square md:aspect-auto md:h-auto min-h-[300px] relative bg-luxury-black overflow-hidden select-none">
+        <div className="w-full md:w-1/2 shrink-0 md:max-h-[90dvh] md:overflow-y-auto bg-luxury-black">
+          <div className="aspect-square relative overflow-hidden select-none">
           <picture className="block w-full h-full">
             {productWebPUrl && <source srcSet={productWebPUrl} type="image/webp" />}
             <img
@@ -60,26 +61,55 @@ const ProductModal = ({ product, onClose, onAddToCart, isInCart, brandSettings }
               </span>
             </div>
           )}
+          </div>
+          {images.length > 1 && (
+            <div className="flex gap-2 p-3 overflow-x-auto">
+              {images.map((source, index) => (
+                <button key={source} type="button" aria-label={`View image ${index + 1}`} aria-pressed={activeImage === index}
+                  onClick={() => setActiveImage(index)}
+                  className={`w-14 h-14 shrink-0 border ${activeImage === index ? 'border-luxury-gold' : 'border-luxury-rosegold/25'}`}>
+                  <img src={getAssetUrl(source)} alt="" className="w-full h-full object-cover" loading="lazy" />
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Column 2: Information Column */}
-        <div className="w-full md:w-1/2 p-6 md:p-8 flex flex-col justify-between overflow-y-auto max-h-[50vh] md:max-h-[80vh]">
+        <div className="w-full md:w-1/2 p-6 md:p-8 flex flex-col justify-between md:overflow-y-auto md:max-h-[90dvh]">
           <div>
             {/* Category tag */}
             <span className="text-[10px] tracking-[0.3em] uppercase font-bold text-luxury-rosegold block mb-2">
-              {collectionLabel}
+              {[label, product.brand !== label ? product.brand : ''].filter(Boolean).join(' · ')}
             </span>
 
             {/* Title */}
-            <h2 className="font-serif text-2xl md:text-3xl tracking-widest text-white uppercase font-black mb-3">
+            <h2 id="product-title" className="font-serif text-2xl md:text-3xl tracking-widest text-white uppercase font-black mb-3">
               {product.name}
             </h2>
 
             {/* Price */}
             <div className="flex items-baseline gap-2 mb-6">
               <span className="text-xs uppercase tracking-wider text-luxury-champagne/40 font-light">Price:</span>
-              <span className="font-serif text-xl font-black text-luxury-gold">GHS {product.price}.00</span>
+              <span className="font-serif text-xl font-black text-luxury-gold">{currency(optionPrice(option))}</span>
+              {option.salePrice != null && <del className="text-luxury-champagne/65">{currency(option.price)}</del>}
             </div>
+
+            {variants.length ? (
+              <label className="block space-y-2 text-sm text-luxury-champagne mb-6">
+                <span>Choose a variant</span>
+                <select value={variantId || ''} onChange={event => setVariantId(event.target.value)}
+                  className="w-full px-3 py-2.5 bg-luxury-black border border-luxury-rosegold/30 text-white">
+                  {variants.map(variant => (
+                    <option key={variant.id} value={variant.id}>
+                      {variant.label}{variant.sizeMl ? ` · ${variant.sizeMl} ml` : ''} · {currency(optionPrice(variant))}
+                      {optionAvailable(product, variant) ? '' : ' · Out of stock'}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : product.sizeMl ? <p className="text-sm text-luxury-champagne mb-5">{product.sizeMl} ml</p> : null}
+
 
             {/* Description */}
             <div className="mb-6">
@@ -114,11 +144,11 @@ const ProductModal = ({ product, onClose, onAddToCart, isInCart, brandSettings }
 
           {/* Action Row */}
           <div className="border-t border-luxury-rosegold/10 pt-6 mt-8 flex flex-col sm:flex-row items-center gap-3">
-            {product.inStock ? (
+            {available ? (
               <>
                 {/* Action 1: Add to Cart */}
                 <button
-                  onClick={() => onAddToCart(product)}
+                  onClick={() => onAddToCart(product, selectedVariant)}
                   className={`w-full py-4 text-xs uppercase tracking-widest font-bold flex items-center justify-center gap-2 transition-all duration-300 ${
                     isInCart 
                       ? 'bg-transparent text-luxury-rosegold border border-luxury-rosegold/30 hover:border-luxury-rosegold' 
@@ -138,13 +168,13 @@ const ProductModal = ({ product, onClose, onAddToCart, isInCart, brandSettings }
                   )}
                 </button>
 
-                {/* Action 2: Direct Buy on WhatsApp */}
+                {/* Checkout */}
                 <button
-                  onClick={handleWhatsAppOrder}
+                  onClick={() => onCheckout(product, selectedVariant)}
                   className="w-full py-4 bg-gradient-to-r from-luxury-wine to-luxury-rosegold text-white text-xs uppercase tracking-widest font-bold hover:shadow-[0_0_20px_rgba(183,110,121,0.4)] flex items-center justify-center gap-2 btn-shimmer"
                 >
-                  <Send size={14} />
-                  Order on WhatsApp
+                  <Wallet size={14} />
+                  Checkout
                 </button>
               </>
             ) : (
@@ -154,6 +184,20 @@ const ProductModal = ({ product, onClose, onAddToCart, isInCart, brandSettings }
               </div>
             )}
           </div>
+          {!!relatedProducts.length && (
+            <div className="mt-7 pt-5 border-t border-luxury-rosegold/20">
+              <h3 className="text-sm uppercase tracking-wider text-luxury-gold">Related products</h3>
+              <div className="grid grid-cols-3 gap-2 mt-3">
+                {relatedProducts.map(related => (
+                  <button type="button" key={related.id} onClick={() => onSelectProduct(related)}
+                    className="text-left text-xs text-luxury-champagne hover:text-white">
+                    <img src={getAssetUrl(related.image)} alt="" className="w-full aspect-square object-cover mb-1" loading="lazy" />
+                    {related.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

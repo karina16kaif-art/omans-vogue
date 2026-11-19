@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BarChart3, Banknote, CalendarDays, CheckCircle, Filter, LogOut, Package, ShoppingBag, Truck } from 'lucide-react';
 import { api } from '../lib/api';
 import AdminProducts from './AdminProducts';
@@ -14,26 +14,30 @@ const EMPTY_ANALYTICS = {
   revenueToday: 0,
   revenueThisMonth: 0,
   pendingOrders: 0,
+  pendingPayments: 0,
   paidOrders: 0,
   deliveredOrders: 0,
   cancelledOrders: 0,
   bestSellingPerfume: null,
   bestSellingProducts: [],
+  productPerformance: [],
   lowStockCount: 0,
   monthlySales: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'].map(month => ({ month, revenue: 0, orders: 0 })),
   ordersByStatus: ORDER_STATUSES.reduce((acc, status) => ({ ...acc, [status]: 0 }), {}),
   collectionSales: { Men: 0, Women: 0 }
 };
 
-const currency = (value) => `GHS ${Number(value || 0).toFixed(2)}`;
+const currency = (value) => `GH₵  ${Number(value || 0).toFixed(2)}`;
 
 const AdminConsole = (props) => {
-  const { products, token, onLogout, brandSettings, onBrandSettingsUpdated, onBrandSettingsRefresh } = props;
+  const { products, token, onLogout, brandSettings, onBrandSettingsUpdated, onBrandSettingsRefresh, onAdminTokenUpdated } = props;
   const [activeTab, setActiveTab] = useState('products');
   const [orders, setOrders] = useState([]);
   const [analytics, setAnalytics] = useState(EMPTY_ANALYTICS);
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [ordersError, setOrdersError] = useState('');
+  const [savingOrders, setSavingOrders] = useState({});
+  const ordersRequest = useRef(null);
   const [filters, setFilters] = useState({
     period: 'all',
     paymentStatus: 'All',
@@ -44,52 +48,53 @@ const AdminConsole = (props) => {
 
   const fetchOrders = useCallback(async () => {
     if (!token) return;
+    ordersRequest.current?.abort();
+    const request = new AbortController();
+    ordersRequest.current = request;
     setOrdersLoading(true);
     setOrdersError('');
-    try {
-      const params = new URLSearchParams();
-      if (filters.period !== 'all') params.set('period', filters.period);
-      if (filters.paymentStatus !== 'All') params.set('paymentStatus', filters.paymentStatus);
-      if (filters.orderStatus !== 'All') params.set('orderStatus', filters.orderStatus);
+    const params = new URLSearchParams();
+    if (filters.period !== 'all') params.set('period', filters.period);
+    if (filters.paymentStatus !== 'All') params.set('paymentStatus', filters.paymentStatus);
+    if (filters.orderStatus !== 'All') params.set('orderStatus', filters.orderStatus);
 
-      const ordersResponse = await api.get(`/api/orders${params.toString() ? `?${params.toString()}` : ''}`, { headers: authHeaders });
-      setOrders(Array.isArray(ordersResponse.data) ? ordersResponse.data : []);
+    const options = { headers: authHeaders, signal: request.signal };
+    const [list, metrics] = await Promise.allSettled([
+      api.get('/api/orders', { ...options, params }),
+      api.get('/api/analytics', options)
+    ]);
+    if (request.signal.aborted) return;
 
-      try {
-        const analyticsResponse = await api.get('/api/analytics', { headers: authHeaders });
-        setAnalytics({ ...EMPTY_ANALYTICS, ...(analyticsResponse.data || {}) });
-      } catch (analyticsError) {
-        console.warn('Orders loaded, but analytics failed:', analyticsError.response?.data || analyticsError.message, analyticsError);
-        setAnalytics(EMPTY_ANALYTICS);
-      }
-    } catch (error) {
-      console.error('Failed to load order dashboard:', error.response?.data || error.message, error);
-      setOrdersError('Unable to load orders. Please refresh your admin session.');
-      setOrders([]);
-      setAnalytics(EMPTY_ANALYTICS);
-    } finally {
-      setOrdersLoading(false);
+    if (list.status === 'fulfilled') setOrders(list.value.data);
+    if (metrics.status === 'fulfilled') setAnalytics({ ...EMPTY_ANALYTICS, ...metrics.value.data });
+    if (list.status === 'rejected' || metrics.status === 'rejected') {
+      setOrdersError('Some order or analytics data could not be loaded. Use Refresh to try again.');
     }
+    setOrdersLoading(false);
   }, [authHeaders, filters, token]);
 
   useEffect(() => {
-    if (activeTab === 'orders') {
-      fetchOrders();
-    }
+    if (activeTab !== 'orders') return;
+    fetchOrders();
+    return () => ordersRequest.current?.abort();
   }, [activeTab, fetchOrders]);
 
-  const updateOrderStatus = async (orderId, orderStatus) => {
+  const updateOrder = async (orderId, route, payload) => {
+    setSavingOrders(previous => ({ ...previous, [orderId]: true }));
+    setOrdersError('');
     try {
-      const response = await api.patch(
-        `/api/orders/${orderId}/status`,
-        { orderStatus },
-        { headers: authHeaders }
-      );
-      setOrders(prev => prev.map(order => order.id === orderId ? response.data : order));
-      fetchOrders();
+      await api.patch(`/api/orders/${encodeURIComponent(orderId)}/${route}`, payload, { headers: authHeaders });
+      await fetchOrders();
     } catch (error) {
-      console.error('Failed to update order status.', error);
-      setOrdersError('Order status update failed.');
+      setOrdersError(error.response?.data?.error || 'The order update failed. Try again.');
+    } finally {
+      setSavingOrders(previous => ({ ...previous, [orderId]: false }));
+    }
+  };
+
+  const verifyPayment = (order) => {
+    if (window.confirm(`Have you confirmed receipt of ${currency(order.totalAmount)} for order ${order.id}?`)) {
+      updateOrder(order.id, 'payment', { paymentStatus: 'Paid' });
     }
   };
 
@@ -113,7 +118,8 @@ const AdminConsole = (props) => {
     ['Revenue Today', currency(analytics?.revenueToday), Banknote],
     ['Revenue This Month', currency(analytics?.revenueThisMonth), Banknote],
     ['Pending Orders', analytics?.pendingOrders || 0, Filter],
-    ['Paid Orders', analytics?.paidOrders || 0, CheckCircle],
+    ['Pending Payments', analytics?.pendingPayments || 0, Banknote],
+    ['Confirmed Paid Orders', analytics?.paidOrders || 0, CheckCircle],
     ['Delivered Orders', analytics?.deliveredOrders || 0, Truck],
     ['Cancelled Orders', analytics?.cancelledOrders || 0, Package],
     ['Best-Selling Perfume', analytics?.bestSellingPerfume?.name || 'No sales yet', BarChart3],
@@ -124,7 +130,7 @@ const AdminConsole = (props) => {
     <section className="relative z-10">
       <div className="max-w-7xl mx-auto px-6 md:px-12 pt-10">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-5 border-b border-luxury-rosegold/10 pb-6">
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             {['products', 'orders', 'brand'].map((tab) => (
               <button
                 key={tab}
@@ -160,6 +166,7 @@ const AdminConsole = (props) => {
           brandSettings={brandSettings}
           onBrandSettingsUpdated={onBrandSettingsUpdated}
           onBrandSettingsRefresh={onBrandSettingsRefresh}
+          onAdminTokenUpdated={onAdminTokenUpdated}
         />
       ) : (
         <div className="max-w-7xl mx-auto px-6 md:px-12 py-12 space-y-10">
@@ -274,7 +281,7 @@ const AdminConsole = (props) => {
               <div className="space-y-3">
                 {(analytics?.bestSellingProducts || []).length > 0 ? (
                   analytics.bestSellingProducts.map((item) => (
-                    <div key={item.name}>
+                    <div key={item.key || item.name}>
                       <div className="flex justify-between text-[9px] uppercase tracking-widest text-luxury-champagne/60 mb-1">
                         <span>{item.name}</span>
                         <span>{item.quantity}</span>
@@ -293,6 +300,27 @@ const AdminConsole = (props) => {
                   </div>
                 )}
               </div>
+              {!!analytics?.productPerformance?.length && (
+                <details className="mt-5 border-t border-luxury-rosegold/15 pt-4">
+                  <summary className="cursor-pointer text-sm text-luxury-champagne">Product performance</summary>
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[240px] text-left text-sm mt-3">
+                      <thead>
+                        <tr><th className="pr-2 pb-2">Product</th><th className="px-2 pb-2 text-right">Units</th><th className="pl-2 pb-2 text-right">Sales</th></tr>
+                      </thead>
+                      <tbody>
+                        {analytics.productPerformance.map(item => (
+                          <tr key={item.key} className="border-t border-luxury-rosegold/10">
+                            <td className="pr-2 py-2">{item.name}</td>
+                            <td className="px-2 py-2 text-right">{item.quantity}</td>
+                            <td className="pl-2 py-2 text-right whitespace-nowrap">{currency(item.revenue)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </details>
+              )}
             </div>
           </div>
 
@@ -340,58 +368,84 @@ const AdminConsole = (props) => {
                   <div className="py-16 text-center text-xs uppercase tracking-widest text-luxury-champagne/50">
                     No orders found for this filter.
                   </div>
-                ) : orders.map((order) => (
-                  <div key={order.id} className="border border-luxury-rosegold/10 bg-luxury-black/40 p-5">
-                    <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-5">
-                      <div className="space-y-2">
-                        <div className="flex flex-wrap items-center gap-3">
-                          <span className="font-serif text-white text-base tracking-widest font-black">{order.id}</span>
-                          <span className="px-2 py-1 border border-luxury-rosegold/20 text-[9px] uppercase tracking-widest text-luxury-rosegold">
-                            {order.paymentStatus}
-                          </span>
-                          <span className="px-2 py-1 border border-white/10 text-[9px] uppercase tracking-widest text-luxury-champagne/60">
-                            {order.orderStatus}
-                          </span>
+                ) : orders.map((order) => {
+                  const paymentVerified = order.paymentStatus === 'Paid' && order.paymentVerifiedAt;
+                  const status = { New: 'Pending', 'Out for Delivery': 'Processing' }[order.orderStatus] || order.orderStatus;
+                  return (
+                    <div key={order.id} className="border border-luxury-rosegold/10 bg-luxury-black/40 p-5">
+                      <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-5">
+                        <div className="space-y-2">
+                          <div className="flex flex-wrap items-center gap-3">
+                            <span className="font-serif text-white text-base tracking-widest font-black">{order.id}</span>
+                            <span className="px-2 py-1 border border-luxury-rosegold/20 text-[9px] uppercase tracking-widest text-luxury-rosegold">
+                              {paymentVerified ? 'Payment verified' : order.paymentStatus === 'Paid' ? 'Payment needs review' : `Payment ${(order.paymentStatus || 'Pending').toLowerCase()}`}
+                            </span>
+                            <span className="px-2 py-1 border border-white/10 text-[9px] uppercase tracking-widest text-luxury-champagne/60">
+                              {status}
+                            </span>
+                          </div>
+                          <p className="text-sm text-luxury-champagne">{order.customerName} · {order.customerPhone}</p>
+                          {order.deliveryPhone && order.deliveryPhone !== order.customerPhone && (
+                            <p className="text-sm text-luxury-champagne">Delivery phone {order.deliveryPhone}</p>
+                          )}
+                          <p className="text-sm text-luxury-champagne/75 break-words">
+                            {order.fulfilmentMethod === 'pickup'
+                              ? `Pickup at ${order.pickupLocation}`
+                              : [order.deliveryAddress, !order.fulfilmentMethod && order.cityRegion].filter(Boolean).join(', ')}
+                          </p>
+                          {order.fulfilmentMethod === 'delivery' && (
+                            <p className="text-sm text-luxury-champagne/75">Campus delivery fee {currency(order.deliveryFee)}</p>
+                          )}
+                          {order.momoPhone && <p className="text-sm text-luxury-champagne">MoMo phone {order.momoPhone}</p>}
+                          {order.paymentReference && <p className="text-sm text-luxury-champagne break-all">Reference {order.paymentReference}</p>}
+                          <p className="text-xs text-luxury-champagne/60">
+                            {new Date(order.createdAt).toLocaleString('en-GH', { timeZone: 'Africa/Accra' })} · {order.paymentMethod}
+                          </p>
                         </div>
-                        <p className="text-xs text-luxury-champagne/70">
-                          {order.customerName} | {order.customerPhone} | Delivery: {order.deliveryPhone}
-                        </p>
-                        <p className="text-xs text-luxury-champagne/50">
-                          {order.deliveryAddress}, {order.cityRegion}
-                        </p>
-                        <p className="text-[10px] uppercase tracking-widest text-luxury-champagne/40">
-                          {new Date(order.createdAt).toLocaleString()} | {order.paymentMethod}
-                        </p>
+
+                        <div className="flex flex-col gap-3 shrink-0">
+                          <span className="font-serif text-luxury-gold font-black text-lg">{currency(order.totalAmount)}</span>
+                          <label className="flex flex-col gap-1 text-sm text-luxury-champagne">
+                            Order status
+                            <select
+                              value={status}
+                              onChange={(event) => updateOrder(order.id, 'status', { orderStatus: event.target.value })}
+                              disabled={savingOrders[order.id]}
+                              className="px-3 py-2 bg-luxury-black border border-luxury-rosegold/25 text-white text-sm focus:border-luxury-rosegold focus:outline-none rounded-none"
+                            >
+                              {ORDER_STATUSES.map(option => <option key={option} value={option}>{option}</option>)}
+                            </select>
+                          </label>
+                          {!paymentVerified && (
+                            <button
+                              type="button"
+                              onClick={() => verifyPayment(order)}
+                              disabled={savingOrders[order.id]}
+                              className="px-3 py-2 border border-luxury-gold/45 hover:border-luxury-gold text-luxury-gold text-sm font-semibold disabled:opacity-50"
+                            >
+                              Verify payment
+                            </button>
+                          )}
+                        </div>
                       </div>
 
-                      <div className="flex flex-col sm:flex-row gap-3 sm:items-center">
-                        <span className="font-serif text-luxury-gold font-black text-lg">{currency(order.totalAmount)}</span>
-                        <select
-                          value={order.orderStatus}
-                          onChange={(e) => updateOrderStatus(order.id, e.target.value)}
-                          className="px-3 py-2 bg-luxury-black border border-luxury-rosegold/10 text-white text-xs focus:border-luxury-rosegold focus:outline-none transition-all rounded-none"
-                        >
-                          {ORDER_STATUSES.map(status => <option key={status} value={status}>{status}</option>)}
-                        </select>
+                      <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {order.items.map((item, index) => (
+                          <div key={`${order.id}-${item.name}-${index}`} className="flex justify-between gap-3 border border-white/5 p-3">
+                            <div>
+                              <span className="text-xs text-white font-serif tracking-wider">{item.name}</span>
+                              <span className="block text-[9px] uppercase tracking-widest text-luxury-rosegold">{item.variantLabel || (item.sizeMl ? `${item.sizeMl} ml` : item.category)}</span>
+                            </div>
+                            <div className="text-right">
+                              <span className="block text-xs text-luxury-champagne">x{item.quantity}</span>
+                              <span className="block text-[10px] text-luxury-gold">{currency(item.unitPrice)}</span>
+                            </div>
+                          </div>
+                        ))}
                       </div>
                     </div>
-
-                    <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-3">
-                      {order.items.map((item, index) => (
-                        <div key={`${order.id}-${item.name}-${index}`} className="flex justify-between gap-3 border border-white/5 p-3">
-                          <div>
-                            <span className="text-xs text-white font-serif tracking-wider">{item.name}</span>
-                            <span className="block text-[9px] uppercase tracking-widest text-luxury-rosegold">{item.category}'s Collection</span>
-                          </div>
-                          <div className="text-right">
-                            <span className="block text-xs text-luxury-champagne">x{item.quantity}</span>
-                            <span className="block text-[10px] text-luxury-gold">{currency(item.unitPrice)}</span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>

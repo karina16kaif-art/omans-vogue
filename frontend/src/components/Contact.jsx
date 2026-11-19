@@ -25,7 +25,7 @@ const Contact = ({ brandSettings }) => {
     const text = encodeURIComponent(
       `Hello ${brandName}! I'd like to initiate a live consultation regarding perfume choices.`
     );
-    window.open(`https://wa.me/${WHATSAPP_NUMBER}?text=${text}`, '_blank');
+    window.open(`https://wa.me/${WHATSAPP_NUMBER.replace(/\D/g, '')}?text=${text}`, '_blank');
   };
 
   return (
@@ -63,7 +63,7 @@ const Contact = ({ brandSettings }) => {
               </div>
               <div>
                 <span className="text-[9px] uppercase tracking-wider text-luxury-champagne/40 block mb-0.5">WhatsApp Concierge</span>
-                <a href={`https://wa.me/${WHATSAPP_NUMBER}`} target="_blank" rel="noreferrer" className="text-xs font-mono text-white hover:text-luxury-gold transition-colors">
+                <a href={`https://wa.me/${WHATSAPP_NUMBER.replace(/\D/g, '')}`} target="_blank" rel="noreferrer" className="text-xs font-mono text-white hover:text-luxury-gold transition-colors">
                   {WHATSAPP_NUMBER}
                 </a>
               </div>

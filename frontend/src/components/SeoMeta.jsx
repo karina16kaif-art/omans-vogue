@@ -1,3 +1,4 @@
+import { collectionLabel, displayOption, optionPrice } from '../lib/catalogue';
 import { useEffect } from 'react';
 import { getAssetUrl } from '../lib/api';
 
@@ -42,11 +43,11 @@ const productSchema = (products) => products.slice(0, 24).map((product) => ({
     '@type': 'Brand',
     name: "OMAN'S VOGUE"
   },
-  category: product.category === 'Women' ? "Women's Fragrance" : "Men's Fragrance",
+  category: collectionLabel(product) || 'Fragrance',
   offers: {
     '@type': 'Offer',
     priceCurrency: 'GHS',
-    price: String(Number(product.price || 0)),
+    price: String(optionPrice(displayOption(product))),
     availability: product.inStock ? 'https://schema.org/InStock' : 'https://schema.org/OutOfStock',
     url: SITE_URL
   }

@@ -30,8 +30,6 @@ const Footer = ({ setActiveSection, brandSettings }) => {
             <span className="text-[8px] uppercase tracking-widest text-luxury-champagne/40 block mb-2 font-semibold">Accepted Atelier Exchanges</span>
             <div className="flex gap-2 justify-center md:justify-start items-center">
               <span className="px-2.5 py-1 text-[8px] bg-luxury-charcoal text-luxury-champagne border border-white/5 font-mono uppercase font-black tracking-wider">MoMo</span>
-              <span className="px-2.5 py-1 text-[8px] bg-luxury-charcoal text-luxury-champagne border border-white/5 font-mono uppercase font-black tracking-wider">Visa</span>
-              <span className="px-2.5 py-1 text-[8px] bg-luxury-charcoal text-luxury-champagne border border-white/5 font-mono uppercase font-black tracking-wider">Mastercard</span>
             </div>
           </div>
         </div>
@@ -40,16 +38,16 @@ const Footer = ({ setActiveSection, brandSettings }) => {
         <div className="space-y-4">
           <h4 className="text-[10px] uppercase font-bold tracking-widest text-luxury-rosegold">COLLECTIONS</h4>
           <ul className="space-y-2 text-[11px] text-luxury-champagne/70 font-light">
-            <li>
+            {brandSettings?.storefront?.collectionVisibility?.women !== false && <li>
               <button onClick={() => { setActiveSection('women'); document.getElementById('catalog').scrollIntoView({ behavior: 'smooth' }); }} className="hover:text-white transition-colors">
-                Women's Collection (GHS 180)
+                Women's Fragrances
               </button>
-            </li>
-            <li>
+            </li>}
+            {brandSettings?.storefront?.collectionVisibility?.men !== false && <li>
               <button onClick={() => { setActiveSection('men'); document.getElementById('catalog').scrollIntoView({ behavior: 'smooth' }); }} className="hover:text-white transition-colors">
-                Men's Collection (GHS 150)
+                Men's Fragrances
               </button>
-            </li>
+            </li>}
             <li>
               <button onClick={() => { setActiveSection('all-products'); document.getElementById('catalog').scrollIntoView({ behavior: 'smooth' }); }} className="hover:text-white transition-colors">
                 All Products Catalog
@@ -89,7 +87,7 @@ const Footer = ({ setActiveSection, brandSettings }) => {
               <span>Live Support Online</span>
             </li>
             <li>
-              <a href={`https://wa.me/${WHATSAPP_NUMBER}`} target="_blank" rel="noreferrer" className="text-white font-mono hover:text-luxury-gold transition-colors">
+              <a href={`https://wa.me/${WHATSAPP_NUMBER.replace(/\D/g, '')}`} target="_blank" rel="noreferrer" className="text-white font-mono hover:text-luxury-gold transition-colors">
                 Concierge Hotline: {WHATSAPP_NUMBER}
               </a>
             </li>

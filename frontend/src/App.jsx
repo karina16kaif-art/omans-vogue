@@ -11,6 +11,8 @@ import About from './components/About';
 import Contact from './components/Contact';
 import Footer from './components/Footer';
 import SeoMeta from './components/SeoMeta';
+import { ShopByCollection, ProductShowcases, FulfilmentInfo } from './components/StorefrontSections';
+import { cartKey, lineKey, memberships, optionAvailable, optionPrice, visibleCollections } from './lib/catalogue';
 
 const AdminDashboard = lazy(() => import('./components/AdminConsole'));
 const AdminLogin = lazy(() => import('./components/AdminLogin'));
@@ -22,7 +24,10 @@ const DEFAULT_BRAND_SETTINGS = {
   heroSubtitle: '“HERE ARE THE PERFECT COLLECTIONS FOR YOUR PERSONAL INNER GROWTH”',
   heroBackgroundImage: '/images/hero_bg.png',
   heroBackgroundWebp: '/images/hero_bg.webp',
-  whatsappNumber: '+233591259991'
+  whatsappNumber: '+233591259991',
+  pickupLocation: 'Jean Nelson Hostel, University of Ghana, Legon',
+  campusDeliveryFee: 10,
+  storefront: {}
 };
 
 const FALLBACK_PRODUCTS = [
@@ -190,14 +195,14 @@ const FALLBACK_PRODUCTS = [
 
 const getInitialProducts = () => {
   if (window.location.pathname === '/admin') {
-    return FALLBACK_PRODUCTS;
+    return [];
   }
 
   try {
     const cachedProducts = localStorage.getItem('omans_products_cache');
     if (cachedProducts) {
       const parsedProducts = JSON.parse(cachedProducts);
-      if (Array.isArray(parsedProducts) && parsedProducts.length > 0) {
+      if (Array.isArray(parsedProducts)) {
         return parsedProducts;
       }
     }
@@ -230,16 +235,20 @@ const App = () => {
   const [brandSettings, setBrandSettings] = useState(getInitialBrandSettings);
   const [cart, setCart] = useState([]);
   const [activeSection, setActiveSection] = useState('home');
+  const [collection, setCollection] = useState('');
+  const [bestSellers, setBestSellers] = useState([]);
   const [selectedProduct, setSelectedProduct] = useState(null);
   
   // Interface triggers
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
+  const [checkoutReceipt, setCheckoutReceipt] = useState(null);
   const [loading, setLoading] = useState(true);
   const [routePath, setRoutePath] = useState(() => window.location.pathname);
   const [adminToken, setAdminToken] = useState(() => localStorage.getItem('omans_admin_token') || '');
   const [adminVerified, setAdminVerified] = useState(false);
   const [adminChecking, setAdminChecking] = useState(false);
+  const verifiedToken = useRef('');
   const isAdminRoute = routePath === '/admin';
 
   // Lagging mouse cursor glow coordinates
@@ -264,24 +273,20 @@ const App = () => {
   );
 
   const fetchProducts = useCallback(async () => {
+    if (isAdminRoute && !adminVerified) return;
     try {
-      const endpoint = isAdminRoute ? `/api/products?fresh=1&_=${Date.now()}` : '/api/products';
-      const response = await api.get(endpoint, {
-        headers: isAdminRoute && adminToken ? authHeaders : undefined
+      const response = await api.get(isAdminRoute ? '/api/admin/products' : '/api/products', {
+        headers: isAdminRoute ? authHeaders : undefined
       });
 
       if (Array.isArray(response.data)) {
-        if (response.data.length > 0 || isAdminRoute) {
-          setProducts(response.data);
-        }
-        if (!isAdminRoute && response.data.length > 0) {
-          localStorage.setItem('omans_products_cache', JSON.stringify(response.data));
-        }
+        setProducts(response.data);
+        if (!isAdminRoute) localStorage.setItem('omans_products_cache', JSON.stringify(response.data));
       }
     } catch (err) {
       console.warn('Backend product fetch failed:', err.response?.data || err.message, err);
     }
-  }, [adminToken, authHeaders, isAdminRoute]);
+  }, [adminVerified, authHeaders, isAdminRoute]);
 
   // Initialize and load products from REST API
   useEffect(() => {
@@ -289,21 +294,36 @@ const App = () => {
   }, [fetchProducts]);
 
   const fetchBrandSettings = useCallback(async () => {
+    if (isAdminRoute && !adminVerified) return;
     try {
-      const response = await api.get(`/api/settings?_=${Date.now()}`);
+      const response = await api.get(isAdminRoute ? '/api/admin/settings' : `/api/settings?_=${Date.now()}`, {
+        headers: isAdminRoute ? authHeaders : undefined
+      });
       if (response.data && typeof response.data === 'object') {
         const nextSettings = { ...DEFAULT_BRAND_SETTINGS, ...response.data };
         setBrandSettings(nextSettings);
-        localStorage.setItem('omans_brand_settings_cache', JSON.stringify(nextSettings));
+        if (!isAdminRoute) localStorage.setItem('omans_brand_settings_cache', JSON.stringify(nextSettings));
       }
     } catch (err) {
-      console.warn('Brand settings fetch failed:', err.response?.data || err.message, err);
+      console.warn('Brand settings fetch failed:', err.response?.data?.error || err.message);
     }
-  }, []);
+  }, [adminVerified, authHeaders, isAdminRoute]);
 
   useEffect(() => {
     fetchBrandSettings();
   }, [fetchBrandSettings]);
+
+  useEffect(() => {
+    if (isAdminRoute) return;
+    const controller = new AbortController();
+    api.get('/api/storefront/best-sellers', { signal: controller.signal })
+      .then(({ data }) => setBestSellers(Array.isArray(data) ? data : []))
+      .catch(() => {});
+    return () => controller.abort();
+  }, [isAdminRoute]);
+
+  const storefront = brandSettings.storefront || DEFAULT_BRAND_SETTINGS.storefront;
+  const currentCollection = visibleCollections(storefront).some(([key]) => key === collection) ? collection : '';
 
   // Sync Cart to/from local storage
   useEffect(() => {
@@ -328,9 +348,11 @@ const App = () => {
         return;
       }
 
+      if (verifiedToken.current === adminToken) return;
       setAdminChecking(true);
       try {
         const response = await api.get('/api/auth/verify', { headers: authHeaders });
+        if (response.data?.valid) verifiedToken.current = adminToken;
         setAdminVerified(Boolean(response.data?.valid));
       } catch (err) {
         console.warn('Stored admin session is invalid or expired.', err);
@@ -344,11 +366,6 @@ const App = () => {
 
     verifyAdmin();
   }, [adminToken, authHeaders, isAdminRoute]);
-
-  const saveCart = useCallback((updatedCart) => {
-    setCart(updatedCart);
-    localStorage.setItem('concierge_cart', JSON.stringify(updatedCart));
-  }, []);
 
   // Custom Cursor Glow Position tracking
   useEffect(() => {
@@ -395,41 +412,69 @@ const App = () => {
     return () => clearTimeout(delay);
   }, []);
 
-  // Cart operations
-  const handleAddToCart = useCallback((product) => {
-    setCart(prevCart => {
-      const existingIndex = prevCart.findIndex(item => item.id === product.id && item.category === product.category);
-      const updatedCart = existingIndex > -1
-        ? prevCart.map((item, index) => index === existingIndex ? { ...item, quantity: item.quantity + 1 } : item)
-        : [...prevCart, { ...product, quantity: 1 }];
-      localStorage.setItem('concierge_cart', JSON.stringify(updatedCart));
-      return updatedCart;
+  // A cart line identifies both the product and the selected variant.
+  const updateCart = useCallback((update) => {
+    setCart(previous => {
+      const next = update(previous);
+      localStorage.setItem('concierge_cart', JSON.stringify(next));
+      return next;
     });
   }, []);
 
-  const handleRemoveItem = useCallback((productId) => {
-    setCart(prevCart => {
-      const updated = prevCart.filter(item => item.id !== productId);
-      localStorage.setItem('concierge_cart', JSON.stringify(updated));
-      return updated;
+  const handleAddToCart = useCallback((product, variant) => {
+    const option = variant ?? product;
+    if (!optionAvailable(product, option) || (product.variants?.length && !variant)) return;
+    const variantId = variant?.id ?? null;
+    const key = lineKey(product.id, variantId);
+    const item = {
+      id: product.id, variantId, variantLabel: variant?.label, name: product.name,
+      sizeMl: option.sizeMl, image: product.image, price: optionPrice(option), stockQuantity: option.stockQuantity, quantity: 1
+    };
+    updateCart(previous => {
+      const existing = previous.find(entry => cartKey(entry) === key);
+      if (!existing) return [...previous, item];
+      const quantity = Math.min(existing.quantity + 1, option.stockQuantity ?? 99, 99);
+      return previous.map(entry => cartKey(entry) === key ? { ...item, quantity } : entry);
     });
-  }, []);
+  }, [updateCart]);
 
-  const handleUpdateQuantity = useCallback((productId, newQuantity) => {
-    setCart(prevCart => {
-      const updated = newQuantity <= 0
-        ? prevCart.filter(item => item.id !== productId)
-        : prevCart.map(item => item.id === productId ? { ...item, quantity: newQuantity } : item);
-      localStorage.setItem('concierge_cart', JSON.stringify(updated));
-      return updated;
-    });
-  }, []);
+  const handleRemoveItem = useCallback((key) => {
+    updateCart(previous => previous.filter(item => cartKey(item) !== key));
+  }, [updateCart]);
 
-  const handleClearCart = useCallback(() => {
-    saveCart([]);
-    setIsCheckoutOpen(false);
+  const handleUpdateQuantity = useCallback((key, newQuantity) => {
+    updateCart(previous => newQuantity <= 0
+      ? previous.filter(item => cartKey(item) !== key)
+      : previous.map(item => cartKey(item) === key
+        ? { ...item, quantity: Math.min(newQuantity, item.stockQuantity ?? 99, 99) }
+        : item));
+  }, [updateCart]);
+
+  const openCheckout = useCallback(() => {
+    setCheckoutReceipt(null);
     setIsCartOpen(false);
-  }, [saveCart]);
+    setIsCheckoutOpen(true);
+  }, []);
+
+  const handleProductCheckout = useCallback((product, variant) => {
+    if (product.variants?.length && !variant) {
+      setSelectedProduct(product);
+      return;
+    }
+    if (!optionAvailable(product, variant ?? product)) return;
+    const key = lineKey(product.id, variant?.id);
+    if (!cart.some(item => cartKey(item) === key)) handleAddToCart(product, variant);
+    setSelectedProduct(null);
+    openCheckout();
+  }, [cart, handleAddToCart, openCheckout]);
+
+  const handleOrderSaved = useCallback((receipt, items) => {
+    setCheckoutReceipt(receipt);
+    const purchased = new Map(items.map(item => [lineKey(item.productId, item.variantId), item.quantity]));
+    updateCart(previous => previous
+      .map(item => ({ ...item, quantity: item.quantity - (purchased.get(cartKey(item)) || 0) }))
+      .filter(item => item.quantity > 0));
+  }, [updateCart]);
 
   // Admin database callback triggers
   const handleProductAdded = useCallback((newProd) => {
@@ -451,12 +496,14 @@ const App = () => {
   }, [selectedProduct]);
 
   const handleAdminLogin = useCallback((token) => {
+    verifiedToken.current = token;
     localStorage.setItem('omans_admin_token', token);
     setAdminToken(token);
     setAdminVerified(true);
   }, []);
 
   const handleAdminLogout = useCallback(() => {
+    verifiedToken.current = '';
     localStorage.removeItem('omans_admin_token');
     setAdminToken('');
     setAdminVerified(false);
@@ -464,9 +511,7 @@ const App = () => {
   }, []);
 
   const handleBrandSettingsUpdated = useCallback((settings) => {
-    const nextSettings = { ...DEFAULT_BRAND_SETTINGS, ...(settings || {}) };
-    setBrandSettings(nextSettings);
-    localStorage.setItem('omans_brand_settings_cache', JSON.stringify(nextSettings));
+    setBrandSettings({ ...DEFAULT_BRAND_SETTINGS, ...(settings || {}) });
   }, []);
 
   // Scrolls to Catalog
@@ -477,12 +522,12 @@ const App = () => {
     }
   }, []);
 
-  // Floating immediate WhatsApp orders button (fixed back-to-top style helper)
+  // WhatsApp concierge chat
   const handleWhatsAppConsultation = useCallback(() => {
     const text = encodeURIComponent(
       `Hello ${brandSettings.brandName}! I am seeking a live consultation with a fragrance expert.`
     );
-    window.open(`https://wa.me/${brandSettings.whatsappNumber}?text=${text}`, '_blank');
+    window.open(`https://wa.me/${brandSettings.whatsappNumber.replace(/\D/g, '')}?text=${text}`, '_blank');
   }, [brandSettings.brandName, brandSettings.whatsappNumber]);
 
   const cartCount = useMemo(
@@ -490,10 +535,27 @@ const App = () => {
     [cart]
   );
 
-  const selectedProductInCart = useMemo(
-    () => selectedProduct ? cart.some(item => item.id === selectedProduct.id && item.category === selectedProduct.category) : false,
-    [cart, selectedProduct]
-  );
+  const selectCollection = useCallback((key) => {
+    setCollection(key);
+    setActiveSection(key || 'all-products');
+    handleExploreScroll();
+  }, [handleExploreScroll]);
+
+  const handleNavigation = useCallback((section) => {
+    if (section === 'all-products') setCollection('');
+    if (section === 'women' || section === 'men') setCollection(section);
+    setActiveSection(section);
+  }, []);
+
+  const relatedProducts = useMemo(() => {
+    if (!selectedProduct) return [];
+    const groups = memberships(selectedProduct, storefront);
+    return products.filter(product => {
+      if (String(product.id) === String(selectedProduct.id)) return false;
+      return (selectedProduct.brand && selectedProduct.brand === product.brand) ||
+        [...memberships(product, storefront)].some(group => groups.has(group));
+    }).slice(0, 3);
+  }, [selectedProduct, products, storefront]);
 
   if (isAdminRoute) {
     return (
@@ -529,6 +591,7 @@ const App = () => {
                   products={products}
                   token={adminToken}
                   onLogout={handleAdminLogout}
+                  onAdminTokenUpdated={handleAdminLogin}
                   onProductAdded={handleProductAdded}
                   onProductUpdated={handleProductUpdated}
                   onProductDeleted={handleProductDeleted}
@@ -588,7 +651,7 @@ const App = () => {
           {/* 4. NAVBAR HEADER */}
           <Navbar 
             activeSection={activeSection} 
-            setActiveSection={setActiveSection} 
+            setActiveSection={handleNavigation}
             cartCount={cartCount}
             onOpenCart={() => setIsCartOpen(true)}
             brandSettings={brandSettings}
@@ -600,15 +663,20 @@ const App = () => {
           {/* 6. MAIN CONTENT ROUTINGS */}
           <main className="flex-grow">
             
-            {/* Catalog Grid Section */}
+            <ShopByCollection settings={storefront} onSelectCollection={selectCollection} />
+
             <Catalog 
               products={products}
+              settings={storefront}
+              collection={currentCollection}
+              onCollectionChange={setCollection}
               onSelectProduct={setSelectedProduct}
-              onAddToCart={handleAddToCart}
-              activeSection={activeSection}
-              setActiveSection={setActiveSection}
-              brandSettings={brandSettings}
+              onCheckout={handleProductCheckout}
             />
+
+            <ProductShowcases products={products} settings={storefront} ranks={bestSellers}
+              onSelectProduct={setSelectedProduct} onCheckout={handleProductCheckout} />
+            <FulfilmentInfo brandSettings={brandSettings} />
 
             {/* Stories/Heritage Section */}
             <About />
@@ -619,16 +687,19 @@ const App = () => {
           </main>
 
           {/* 7. FOOTER concierges */}
-          <Footer setActiveSection={setActiveSection} brandSettings={brandSettings} />
+          <Footer setActiveSection={handleNavigation} brandSettings={brandSettings} />
 
           {/* 8. IMMERSIVE PRODUCT DETAILS POP-UP MODAL */}
           {selectedProduct && (
             <ProductModal 
+              key={selectedProduct.id}
               product={selectedProduct}
+              relatedProducts={relatedProducts}
+              onSelectProduct={setSelectedProduct}
+              cart={cart}
               onClose={() => setSelectedProduct(null)}
               onAddToCart={handleAddToCart}
-              isInCart={selectedProductInCart}
-              brandSettings={brandSettings}
+              onCheckout={handleProductCheckout}
             />
           )}
 
@@ -639,19 +710,20 @@ const App = () => {
             cartItems={cart}
             onUpdateQuantity={handleUpdateQuantity}
             onRemoveItem={handleRemoveItem}
-            onCheckout={() => {
+            onCheckout={openCheckout}
+            onResumeOrder={checkoutReceipt ? () => {
               setIsCartOpen(false);
               setIsCheckoutOpen(true);
-            }}
+            } : undefined}
           />
 
-          {/* 10. BILLING SECURE PLACEHOLDER PANEL */}
+          {/* 10. CHECKOUT */}
           <CheckoutModal 
             isOpen={isCheckoutOpen}
             onClose={() => setIsCheckoutOpen(false)}
             cartItems={cart}
-            onClearCart={handleClearCart}
-            brandSettings={brandSettings}
+            receipt={checkoutReceipt}
+            onOrderSaved={handleOrderSaved}
           />
 
           {/* 11. FLOATING WHATSAPP ASSISTANT BUTTON */}

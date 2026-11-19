@@ -1,8 +1,9 @@
 import React from 'react';
-import { X, Plus, Minus, Trash2, ShieldCheck, Send } from 'lucide-react';
+import { X, Plus, Minus, Trash2, ShieldCheck } from 'lucide-react';
 import { getAssetUrl, getWebPAssetUrl } from '../lib/api';
+import { cartKey } from '../lib/catalogue';
 
-const CartDrawer = ({ isOpen, onClose, cartItems, onUpdateQuantity, onRemoveItem, onCheckout }) => {
+const CartDrawer = ({ isOpen, onClose, cartItems, onUpdateQuantity, onRemoveItem, onCheckout, onResumeOrder }) => {
   if (!isOpen) return null;
 
   // Compute sum totals
@@ -55,6 +56,11 @@ const CartDrawer = ({ isOpen, onClose, cartItems, onUpdateQuantity, onRemoveItem
                 >
                   Continue Browsing
                 </button>
+                {onResumeOrder && (
+                  <button type="button" onClick={onResumeOrder} className="text-sm text-luxury-champagne underline underline-offset-4">
+                    View last order
+                  </button>
+                )}
               </div>
             ) : (
               cartItems.map((item) => {
@@ -62,7 +68,7 @@ const CartDrawer = ({ isOpen, onClose, cartItems, onUpdateQuantity, onRemoveItem
 
                 return (
                   <div
-                    key={`${item.id}-${item.category}`}
+                    key={cartKey(item)}
                     className="flex gap-4 pb-6 border-b border-luxury-rosegold/5 items-start group"
                   >
                     {/* Thumbnail */}
@@ -87,14 +93,14 @@ const CartDrawer = ({ isOpen, onClose, cartItems, onUpdateQuantity, onRemoveItem
                             {item.name}
                           </h4>
                           <button
-                            onClick={() => onRemoveItem(item.id)}
+                            onClick={() => onRemoveItem(cartKey(item))}
                             className="text-luxury-champagne/40 hover:text-luxury-rosegold transition-colors"
                           >
                             <Trash2 size={12} />
                           </button>
                         </div>
                         <span className="text-[9px] uppercase tracking-wider text-luxury-rosegold font-medium">
-                          {item.category}'s Collection
+                          {item.variantLabel || (item.sizeMl ? `${item.sizeMl} ml` : '')}
                         </span>
                       </div>
 
@@ -102,21 +108,23 @@ const CartDrawer = ({ isOpen, onClose, cartItems, onUpdateQuantity, onRemoveItem
                         {/* Quantity Toggles */}
                         <div className="flex items-center border border-luxury-rosegold/15 bg-luxury-black/50">
                           <button
-                            onClick={() => onUpdateQuantity(item.id, item.quantity - 1)}
+                            onClick={() => onUpdateQuantity(cartKey(item), item.quantity - 1)}
                             className="px-2 py-1 text-luxury-champagne/60 hover:text-white transition-colors"
                           >
                             <Minus size={10} />
                           </button>
                           <span className="px-2 text-[10px] font-bold text-white font-mono">{item.quantity}</span>
                           <button
-                            onClick={() => onUpdateQuantity(item.id, item.quantity + 1)}
+                            onClick={() => onUpdateQuantity(cartKey(item), item.quantity + 1)}
+                            disabled={item.quantity >= Math.min(item.stockQuantity ?? 99, 99)}
+                            aria-label={`Increase quantity of ${item.name}`}
                             className="px-2 py-1 text-luxury-champagne/60 hover:text-white transition-colors"
                           >
                             <Plus size={10} />
                           </button>
                         </div>
                         {/* Price subtotal */}
-                        <span className="font-serif text-xs font-bold text-luxury-gold">GHS {item.price * item.quantity}.00</span>
+                        <span className="font-serif text-xs font-bold text-luxury-gold">GH₵{(item.price * item.quantity).toFixed(2)}</span>
                       </div>
                     </div>
                   </div>
@@ -131,18 +139,10 @@ const CartDrawer = ({ isOpen, onClose, cartItems, onUpdateQuantity, onRemoveItem
               {/* Summary totals */}
               <div className="space-y-2">
                 <div className="flex justify-between text-xs text-luxury-champagne/60 uppercase tracking-widest font-light">
-                  <span>Subtotal</span>
-                  <span>GHS {subtotal}.00</span>
+                  <span>Cart subtotal</span>
+                  <span className="font-serif text-lg font-black text-luxury-gold">GH₵{subtotal.toFixed(2)}</span>
                 </div>
-                <div className="flex justify-between text-xs text-luxury-champagne/60 uppercase tracking-widest font-light">
-                  <span>Shipping</span>
-                  <span className="text-luxury-rosegold font-medium tracking-wide">Complimentary</span>
-                </div>
-                <div className="w-full h-[1px] bg-luxury-rosegold/10 my-2" />
-                <div className="flex justify-between items-baseline">
-                  <span className="font-serif text-sm text-white font-bold uppercase tracking-widest">Total Price</span>
-                  <span className="font-serif text-lg font-black text-luxury-gold">GHS {subtotal}.00</span>
-                </div>
+                <p className="text-sm text-luxury-champagne/75">Pickup and campus delivery are selected at checkout.</p>
               </div>
 
               {/* Checkout buttons */}
@@ -156,10 +156,6 @@ const CartDrawer = ({ isOpen, onClose, cartItems, onUpdateQuantity, onRemoveItem
                 </button>
               </div>
 
-              <div className="flex items-center justify-center gap-1.5 opacity-40">
-                <ShieldCheck size={10} />
-                <span className="text-[8px] uppercase tracking-widest font-semibold">SSL Encrypted / Secure Placeholders Only</span>
-              </div>
             </div>
           )}
 

@@ -24,7 +24,6 @@ const AdminLogin = ({ onLoginSuccess, onCancel }) => {
         onLoginSuccess(response.data.token);
       }
     } catch (err) {
-      console.error('Authentication failure:', err);
       if (err.response && err.response.data && err.response.data.error) {
         setError(err.response.data.error);
       } else {
@@ -77,13 +76,15 @@ const AdminLogin = ({ onLoginSuccess, onCancel }) => {
           <form onSubmit={handleSubmit} className="space-y-6">
             {/* Username */}
             <div className="flex flex-col gap-1.5">
-              <label className="text-[9px] uppercase text-luxury-champagne/60 tracking-widest font-semibold flex items-center gap-1.5">
+              <label htmlFor="admin-username" className="text-[9px] uppercase text-luxury-champagne/60 tracking-widest font-semibold flex items-center gap-1.5">
                 <User size={10} className="text-luxury-gold" />
                 Director Username
               </label>
               <input
                 required
                 type="text"
+                id="admin-username"
+                autoComplete="username"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 placeholder="Enter admin username"
@@ -93,13 +94,16 @@ const AdminLogin = ({ onLoginSuccess, onCancel }) => {
 
             {/* Password */}
             <div className="flex flex-col gap-1.5">
-              <label className="text-[9px] uppercase text-luxury-champagne/60 tracking-widest font-semibold flex items-center gap-1.5">
+              <label htmlFor="admin-password" className="text-[9px] uppercase text-luxury-champagne/60 tracking-widest font-semibold flex items-center gap-1.5">
                 <Lock size={10} className="text-luxury-gold" />
                 Security Password
               </label>
               <input
                 required
                 type="password"
+                id="admin-password"
+                autoComplete="current-password"
+                maxLength={128}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••••••••"

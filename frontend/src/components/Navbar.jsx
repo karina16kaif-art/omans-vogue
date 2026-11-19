@@ -20,19 +20,19 @@ const Navbar = ({ activeSection, setActiveSection, cartCount, onOpenCart, brandS
 
   const navLinks = [
     { id: 'home', label: 'Home' },
-    { id: 'women', label: "Women's Collection" },
-    { id: 'men', label: "Men's Collection" },
+    { id: 'women', label: "Women's Fragrances" },
+    { id: 'men', label: "Men's Fragrances" },
     { id: 'all-products', label: 'All Products' },
     { id: 'about', label: 'About' },
     { id: 'contact', label: 'Contact' },
-  ];
+  ].filter(link => brandSettings?.storefront?.collectionVisibility?.[link.id] !== false);
 
   const handleNavClick = (sectionId) => {
     setActiveSection(sectionId);
     setMobileMenuOpen(false);
     
     // Smooth scroll down to appropriate content blocks if needed
-    const targetElement = document.getElementById(sectionId);
+    const targetElement = document.getElementById(['women', 'men', 'all-products'].includes(sectionId) ? 'catalog' : sectionId);
     if (targetElement) {
       targetElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
     } else {
@@ -85,6 +85,7 @@ const Navbar = ({ activeSection, setActiveSection, cartCount, onOpenCart, brandS
           {/* Cart Trigger Button */}
           <button 
             onClick={onOpenCart}
+            aria-label="Open cart"
             className="relative p-2.5 rounded-full border border-luxury-rosegold/10 hover:border-luxury-rosegold/30 hover:bg-luxury-charcoal/50 text-luxury-champagne hover:text-white transition-all duration-300 group"
           >
             <ShoppingBag size={18} className="group-hover:scale-110 transition-transform" />

@@ -5,9 +5,14 @@ const bodyParser = require('body-parser');
 const fs = require('fs');
 const path = require('path');
 const multer = require('multer');
-const jwt = require('jsonwebtoken');
 const sharp = require('sharp');
 const crypto = require('crypto');
+const createAdminAuth = require('./admin-auth');
+const { productPayload, publicProduct, productAvailable, normalizeStorefront, fallbackImage } = require('./catalogue');
+const {
+  campus, cleanText, toE164, toGhanaPhone, toPesewas, formatCurrency,
+  hash, checkoutError, parseItems, parseOrder, buildQuote, buildWhatsAppMessage
+} = require('./checkout');
 let nodemailer = null;
 
 try {
@@ -19,24 +24,21 @@ try {
 const app = express();
 const PORT = process.env.PORT || 5001;
 const isProduction = process.env.NODE_ENV === 'production';
+const checkoutEnabled = isProduction
+  ? process.env.CHECKOUT_ENABLED === 'true'
+  : process.env.CHECKOUT_ENABLED !== 'false';
 
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'concierge';
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'omans_secret_key_2026';
-const JWT_SECRET = process.env.JWT_SECRET || (isProduction ? '' : 'omans_vogue_royal_token_hash');
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
+const JWT_SECRET = process.env.JWT_SECRET || (isProduction ? '' : crypto.randomBytes(32).toString('hex'));
 const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || 'https://omansvogue.netlify.app';
-const HUBTEL_CLIENT_ID = process.env.HUBTEL_CLIENT_ID || '';
-const HUBTEL_CLIENT_SECRET = process.env.HUBTEL_CLIENT_SECRET || '';
-const HUBTEL_MERCHANT_ACCOUNT = process.env.HUBTEL_MERCHANT_ACCOUNT || '';
-const HUBTEL_CALLBACK_URL = process.env.HUBTEL_CALLBACK_URL || '';
-const HUBTEL_RETURN_URL = process.env.HUBTEL_RETURN_URL || CLIENT_ORIGIN;
-const HUBTEL_API_BASE_URL = (process.env.HUBTEL_API_BASE_URL || 'https://api.hubtel.com/v1').replace(/\/+$/, '');
 const ADMIN_NOTIFICATION_EMAIL = process.env.ADMIN_NOTIFICATION_EMAIL || '';
 const GMAIL_USER = process.env.GMAIL_USER || '';
 const GMAIL_APP_PASSWORD = process.env.GMAIL_APP_PASSWORD || '';
 const ADMIN_WHATSAPP_NUMBER = process.env.ADMIN_WHATSAPP_NUMBER || '';
 const WHATSAPP_ALERT_WEBHOOK_URL = process.env.WHATSAPP_ALERT_WEBHOOK_URL || '';
 const SUPABASE_URL = (process.env.SUPABASE_URL || '').replace(/\/+$/, '');
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+const SUPABASE_SERVER_KEY = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 const CLOUDINARY_CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME || '';
 const CLOUDINARY_API_KEY = process.env.CLOUDINARY_API_KEY || '';
 const CLOUDINARY_API_SECRET = process.env.CLOUDINARY_API_SECRET || '';
@@ -50,13 +52,18 @@ const ALLOWED_ORIGINS = (process.env.CORS_ORIGINS || [
   .map(origin => origin.trim())
   .filter(Boolean);
 
-if (!JWT_SECRET) {
-  throw new Error('JWT_SECRET is required in production.');
+if (isProduction && (JWT_SECRET.length < 32)) {
+  throw new Error('Set a JWT_SECRET of at least 32 characters in production.');
 }
 
-if (isProduction && JWT_SECRET === 'omans_vogue_royal_token_hash') {
-  console.warn('[Oman’s Vogue Server] WARNING: using the development JWT secret in production.');
-}
+// Reject the previously bundled password without embedding it in the release.
+const legacyAdminPasswordDigest = 'b413cda0432fe4c657f6e08a8a86dd6c8bc2dbdd684c3a961b1014e2426cdd29';
+const bootstrapPassword = isProduction && (ADMIN_PASSWORD.length < 12 ||
+  crypto.createHash('sha256').update(ADMIN_PASSWORD).digest('hex') === legacyAdminPasswordDigest)
+  ? ''
+  : ADMIN_PASSWORD;
+
+const route = (handler) => (req, res, next) => Promise.resolve(handler(req, res)).catch(next);
 
 // Middlewares
 app.disable('x-powered-by');
@@ -80,22 +87,6 @@ app.options('*', cors(corsOptions));
 app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
 
-// Auth authentication middleware
-const authenticateAdmin = (req, res, next) => {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !/^Bearer\s+/i.test(authHeader)) {
-    return res.status(401).json({ error: 'Unauthorized: Missing or malformed token' });
-  }
-  const token = authHeader.replace(/^Bearer\s+/i, '').trim();
-  try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    req.admin = decoded;
-    next();
-  } catch (err) {
-    return res.status(401).json({ error: 'Unauthorized: Invalid or expired token' });
-  }
-};
-
 // Paths
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'products.json');
@@ -114,117 +105,22 @@ const DEFAULT_BRAND_SETTINGS = {
   heroSubtitle: '“HERE ARE THE PERFECT COLLECTIONS FOR YOUR PERSONAL INNER GROWTH”',
   heroBackgroundImage: '/images/hero_bg.png',
   heroBackgroundWebp: '/images/hero_bg.webp',
-  whatsappNumber: '+233591259991'
+  whatsappNumber: '+233591259991',
+  momoNumber: '',
+  momoAccountName: '',
+  pickupLocation: `Jean Nelson Hostel, ${campus}`,
+  campusDeliveryFee: 10
 };
 
-const isSupabaseConfigured = () => Boolean(SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY);
+const isSupabaseConfigured = () => Boolean(SUPABASE_URL && SUPABASE_SERVER_KEY);
 const isCloudinaryConfigured = () => Boolean(CLOUDINARY_CLOUD_NAME && CLOUDINARY_API_KEY && CLOUDINARY_API_SECRET);
-const SUPABASE_TABLE_SQL = `
-create table if not exists products (
-  id bigint primary key,
-  name text not null default '',
-  category text not null default '',
-  price numeric not null default 0,
-  in_stock boolean default true,
-  stock_status text default 'In Stock',
-  description text default '',
-  notes text default '',
-  image text default '',
-  image_url text default '',
-  created_at timestamptz default now(),
-  updated_at timestamptz default now()
-);
-
-alter table products add column if not exists name text not null default '';
-alter table products add column if not exists category text not null default '';
-alter table products add column if not exists price numeric not null default 0;
-alter table products add column if not exists in_stock boolean default true;
-alter table products add column if not exists stock_status text default 'In Stock';
-alter table products add column if not exists description text default '';
-alter table products add column if not exists notes text default '';
-alter table products add column if not exists image text default '';
-alter table products add column if not exists image_url text default '';
-alter table products add column if not exists created_at timestamptz default now();
-alter table products add column if not exists updated_at timestamptz default now();
-
-create table if not exists orders (
-  id text primary key,
-  customer_name text default '',
-  customer_phone text default '',
-  delivery_phone text default '',
-  delivery_address text default '',
-  city_region text default '',
-  items jsonb default '[]'::jsonb,
-  total_amount numeric default 0,
-  payment_method text default '',
-  payment_status text default 'Pending',
-  order_status text default 'Pending',
-  hubtel jsonb,
-  created_at timestamptz default now(),
-  updated_at timestamptz default now()
-);
-
-alter table orders add column if not exists customer_name text default '';
-alter table orders add column if not exists customer_phone text default '';
-alter table orders add column if not exists delivery_phone text default '';
-alter table orders add column if not exists delivery_address text default '';
-alter table orders add column if not exists city_region text default '';
-alter table orders add column if not exists items jsonb default '[]'::jsonb;
-alter table orders add column if not exists total_amount numeric default 0;
-alter table orders add column if not exists payment_method text default '';
-alter table orders add column if not exists payment_status text default 'Pending';
-alter table orders add column if not exists order_status text default 'Pending';
-alter table orders add column if not exists hubtel jsonb;
-alter table orders add column if not exists created_at timestamptz default now();
-alter table orders add column if not exists updated_at timestamptz default now();
-
-create table if not exists brand_settings (
-  id bigint primary key default 1,
-  brand_name text default 'OMAN''S VOGUE',
-  hero_eyebrow text default 'L''ART DE LA PARFUMERIE',
-  hero_headline_prefix text default 'WELCOME TO',
-  hero_subtitle text default '“HERE ARE THE PERFECT COLLECTIONS FOR YOUR PERSONAL INNER GROWTH”',
-  hero_background_image text default '/images/hero_bg.png',
-  hero_background_webp text default '/images/hero_bg.webp',
-  whatsapp_number text default '+233591259991',
-  updated_at timestamptz default now()
-);
-
-alter table brand_settings add column if not exists brand_name text default 'OMAN''S VOGUE';
-alter table brand_settings add column if not exists hero_eyebrow text default 'L''ART DE LA PARFUMERIE';
-alter table brand_settings add column if not exists hero_headline_prefix text default 'WELCOME TO';
-alter table brand_settings add column if not exists hero_subtitle text default '“HERE ARE THE PERFECT COLLECTIONS FOR YOUR PERSONAL INNER GROWTH”';
-alter table brand_settings add column if not exists hero_background_image text default '/images/hero_bg.png';
-alter table brand_settings add column if not exists hero_background_webp text default '/images/hero_bg.webp';
-alter table brand_settings add column if not exists whatsapp_number text default '+233591259991';
-alter table brand_settings add column if not exists updated_at timestamptz default now();
-
-insert into brand_settings (
-  id,
-  brand_name,
-  hero_eyebrow,
-  hero_headline_prefix,
-  hero_subtitle,
-  hero_background_image,
-  hero_background_webp,
-  whatsapp_number
-) values (
-  1,
-  'OMAN''S VOGUE',
-  'L''ART DE LA PARFUMERIE',
-  'WELCOME TO',
-  '“HERE ARE THE PERFECT COLLECTIONS FOR YOUR PERSONAL INNER GROWTH”',
-  '/images/hero_bg.png',
-  '/images/hero_bg.webp',
-  '+233591259991'
-) on conflict (id) do nothing;
-`.trim();
+const SUPABASE_MIGRATION = 'supabase/migrations/202611180001_manual_momo_checkout.sql';
 
 const supabaseSetupErrorResponse = (error) => ({
   error: 'Supabase setup error',
   message: error?.message || 'Supabase request failed. Confirm tables exist and the service role key is valid.',
   details: error?.details || null,
-  setupSql: SUPABASE_TABLE_SQL
+  migration: SUPABASE_MIGRATION
 });
 
 const logSupabaseError = (label, error) => {
@@ -278,10 +174,11 @@ const supabaseRequest = async (resource, options = {}) => {
   }
 
   const response = await fetch(`${SUPABASE_URL}/rest/v1/${resource}`, {
+    signal: AbortSignal.timeout(12000),
     ...options,
     headers: {
-      apikey: SUPABASE_SERVICE_ROLE_KEY,
-      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      apikey: SUPABASE_SERVER_KEY,
+      ...(SUPABASE_SERVER_KEY.startsWith('sb_secret_') ? {} : { Authorization: `Bearer ${SUPABASE_SERVER_KEY}` }),
       'Content-Type': 'application/json',
       ...(options.headers || {})
     }
@@ -301,78 +198,127 @@ const supabaseRequest = async (resource, options = {}) => {
   return data;
 };
 
+const { authenticateAdmin, login, changePassword } = createAdminAuth({
+  username: ADMIN_USERNAME,
+  bootstrapPassword,
+  secret: JWT_SECRET,
+  dataDir: DATA_DIR,
+  isSupabaseConfigured,
+  supabaseRequest
+});
+
 const assertSupabaseTablesReady = async () => {
   await supabaseRequest('brand_settings?select=id,hero_background_image,hero_background_webp&limit=1');
 };
 
-const mapProductFromDb = (row) => ({
-  id: row.id,
-  name: row.name,
-  category: row.category,
-  price: Number(row.price || 0),
-  inStock: row.in_stock !== false,
-  description: row.description || '',
-  notes: row.notes || '',
-  image: row.image_url || row.image || (row.category === 'Women' ? '/images/products/women_placeholder.png' : '/images/products/men_placeholder.png')
-});
+const PRODUCT_PROJECTION = 'select=*,product_id_text:id::text';
+const productIdValue = (id) => Number.isSafeInteger(Number(id)) ? Number(id) : String(id);
+const parseProductId = (id) => {
+  const value = String(id ?? '');
+  return /^[1-9]\d{0,18}$/.test(value) && BigInt(value) <= 9223372036854775807n ? value : null;
+};
+const optionalNumeric = (value) => value == null ? null : Number(value);
+
+const mapProductFromDb = (row) => {
+  const image = row.image_url || row.image || fallbackImage(row.category);
+  const images = Array.isArray(row.images) && row.images.length ? row.images : [image];
+  return {
+    id: productIdValue(row.product_id_text ?? row.id), name: row.name, category: row.category,
+    price: Number(row.price || 0), enabled: row.in_stock !== false,
+    description: row.description || row.detailed_description || '', notes: row.notes || '',
+    image: images[0], images, brand: row.brand || '', collections: row.collections ?? null,
+    sizeMl: optionalNumeric(row.size_ml), stockQuantity: optionalNumeric(row.stock_quantity),
+    salePrice: optionalNumeric(row.sale_price), variants: Array.isArray(row.variants) ? row.variants : [],
+    featured: row.featured === true, newArrival: row.new_arrival === true,
+    createdAt: row.created_at, catalogVersion: String(row.catalog_version ?? 0), archivedAt: row.archived_at
+  };
+};
 
 const mapProductToDb = (product) => ({
-  id: product.id,
-  name: product.name,
-  category: product.category,
-  price: Number(product.price || 0),
-  in_stock: product.inStock !== false,
-  stock_status: product.inStock === false ? 'Out of Stock' : 'In Stock',
-  description: product.description || '',
-  notes: product.notes || '',
-  image: product.image || '',
-  image_url: product.image || '',
-  updated_at: new Date().toISOString()
+  name: product.name, category: product.category, price: product.price,
+  in_stock: product.enabled, stock_status: productAvailable(product) ? 'in_stock' : 'out_of_stock',
+  description: product.description, notes: product.notes,
+  image: product.image, image_url: product.image, images: product.images,
+  brand: product.brand, collections: product.collections, size_ml: product.sizeMl,
+  stock: product.stockQuantity, stock_quantity: product.stockQuantity, sale_price: product.salePrice, variants: product.variants,
+  featured: product.featured, new_arrival: product.newArrival, updated_at: new Date().toISOString()
 });
 
+const localProduct = (product) => ({
+  ...product, enabled: product.enabled ?? product.inStock !== false,
+  images: product.images?.length ? product.images : (product.image ? [product.image] : []),
+  catalogVersion: String(product.catalogVersion ?? 0)
+});
+
+// Cast the ID in PostgreSQL before JSON parsing to preserve the full bigint range.
+const ORDER_PROJECTION = 'select=*,order_id_text:id::text';
+
 const mapOrderFromDb = (row) => ({
-  id: row.id,
+  id: row.order_id_text,
   customerName: row.customer_name,
   customerPhone: row.customer_phone,
+  customerEmail: row.customer_email,
   deliveryPhone: row.delivery_phone,
   deliveryAddress: row.delivery_address,
   cityRegion: row.city_region,
   items: Array.isArray(row.items) ? row.items : [],
-  totalAmount: Number(row.total_amount || 0),
+  totalAmount: Number(row.total ?? row.total_amount ?? 0),
   paymentMethod: row.payment_method,
-  paymentStatus: row.payment_status,
-  orderStatus: row.order_status,
+  paymentStatus: row.admin_payment_verified_at ? 'Paid' : unverifiedPaymentStatus(row),
+  paymentVerifiedAt: row.admin_payment_verified_at,
+  fulfilmentMethod: row.fulfilment_method,
+  pickupLocation: row.pickup_location,
+  deliveryFee: row.delivery_fee == null ? null : Number(row.delivery_fee),
+  momoPhone: row.momo_phone,
+  paymentReference: row.payment_reference,
+  orderStatus: orderStatus(
+    !row.checkout_request_id && orderStatus(row.status) === 'Pending'
+      ? row.order_status ?? row.status
+      : row.status ?? row.order_status
+  ),
   createdAt: row.created_at,
   updatedAt: row.updated_at,
   hubtel: row.hubtel || null
 });
 
 const mapOrderToDb = (order) => ({
-  id: order.id,
   customer_name: order.customerName,
+  ...(order.customerEmail ? { customer_email: order.customerEmail } : {}),
   customer_phone: order.customerPhone,
   delivery_phone: order.deliveryPhone,
   delivery_address: order.deliveryAddress,
   city_region: order.cityRegion,
   items: Array.isArray(order.items) ? order.items : [],
-  total_amount: Number(order.totalAmount || 0),
+  total: order.totalAmount,
+  total_amount: order.totalAmount,
+  order_status: 'Pending',
   payment_method: order.paymentMethod,
-  payment_status: order.paymentStatus,
-  order_status: order.orderStatus,
+  fulfilment_method: order.fulfilmentMethod,
+  ...(order.pickupLocation ? { pickup_location: order.pickupLocation } : {}),
+  delivery_fee: order.deliveryFee,
+  momo_phone: order.momoPhone,
+  payment_reference: order.paymentReference,
+  checkout_request_id: order.requestId,
+  checkout_request_hash: order.requestHash,
+  whatsapp_number: order.whatsappNumber,
   created_at: order.createdAt,
-  updated_at: order.updatedAt || new Date().toISOString(),
-  hubtel: order.hubtel || null
+  updated_at: order.updatedAt
 });
 
 const mapSettingsFromDb = (row) => Object.fromEntries(
   Object.entries({
-    brandName: row.brand_name,
+    brandName: row.brand_name || row.hero_title,
     heroEyebrow: row.hero_eyebrow,
-    heroHeadlinePrefix: row.hero_headline_prefix,
+    heroHeadlinePrefix: row.hero_headline_prefix || row.hero_prefix,
     heroSubtitle: row.hero_subtitle,
-    heroBackgroundImage: row.hero_background_image,
+    heroBackgroundImage: row.hero_background_image || row.hero_background_url,
     heroBackgroundWebp: row.hero_background_webp,
-    whatsappNumber: row.whatsapp_number
+    whatsappNumber: row.whatsapp_number,
+    momoNumber: row.momo_number,
+    momoAccountName: row.momo_account_name,
+    pickupLocation: row.pickup_location,
+    campusDeliveryFee: optionalNumeric(row.campus_delivery_fee ?? row.delivery_fee),
+    storefront: row.storefront
   }).filter(([, value]) => value !== undefined && value !== null && value !== '')
 );
 
@@ -385,6 +331,11 @@ const mapSettingsToDb = (settings) => ({
   hero_background_image: settings.heroBackgroundImage,
   hero_background_webp: settings.heroBackgroundWebp,
   whatsapp_number: settings.whatsappNumber,
+  momo_number: settings.momoNumber,
+  momo_account_name: settings.momoAccountName,
+  pickup_location: settings.pickupLocation,
+  delivery_fee: settings.campusDeliveryFee,
+  storefront: settings.storefront,
   updated_at: new Date().toISOString()
 });
 
@@ -496,28 +447,24 @@ const brandUpload = multer({
   }
 });
 
-// Helper to read products
-const getProducts = async () => {
-  if (isSupabaseConfigured()) {
-    try {
-      const rows = await supabaseRequest('products?select=*&order=id.asc');
-      if (Array.isArray(rows) && rows.length > 0) {
-        return rows.map(mapProductFromDb);
-      }
-
-      const fallbackProducts = readJsonFile(DATA_FILE, []);
-      if (Array.isArray(fallbackProducts) && fallbackProducts.length > 0) {
-        await saveProducts(fallbackProducts);
-        return fallbackProducts;
-      }
-      return [];
-    } catch (error) {
-      logSupabaseError('Supabase products read failed, using JSON fallback:', error);
-    }
-  }
-
+const readLocalProducts = () => {
   const products = readJsonFile(DATA_FILE, []);
-  return Array.isArray(products) ? products : [];
+  return Array.isArray(products) ? products.map(localProduct) : [];
+};
+
+const getProducts = async () => {
+  if (!isSupabaseConfigured()) return readLocalProducts().filter(product => !product.archivedAt);
+
+  const products = [];
+  let cursor;
+  do {
+    const filter = cursor ? `&id=gt.${cursor}` : '';
+    const rows = await supabaseRequest(`products?${PRODUCT_PROJECTION}&archived_at=is.null&order=id.asc&limit=250${filter}`);
+    if (!rows.length) break;
+    products.push(...rows.map(mapProductFromDb));
+    cursor = rows[rows.length - 1].product_id_text;
+  } while (true);
+  return products;
 };
 
 const normalizeCategory = (category) => {
@@ -527,85 +474,47 @@ const normalizeCategory = (category) => {
   return '';
 };
 
-const normalizeProductInput = (value) => typeof value === 'string' ? value.trim() : value;
-const normalizeStoredImage = (image, fallbackImage) => {
-  const normalized = normalizeProductInput(image);
-  if (!normalized || /^blob:/i.test(normalized)) {
-    return fallbackImage;
-  }
-  return normalized;
-};
 const ORDER_STATUSES = ['Pending', 'Processing', 'Delivered', 'Cancelled'];
 const LEGACY_ORDER_STATUSES = ['New', 'Out for Delivery'];
 const ACCEPTED_ORDER_STATUSES = [...ORDER_STATUSES, ...LEGACY_ORDER_STATUSES];
-const PAYMENT_STATUSES = ['Pending', 'Paid', 'Failed', 'Cancelled'];
-const normalizeOrderInput = (value) => typeof value === 'string' ? value.trim() : value;
+const isConfirmedPaid = (order) => order.paymentStatus === 'Paid' && Boolean(order.paymentVerifiedAt);
 
-const toGhanaE164 = (phone) => {
-  const raw = normalizeOrderInput(phone) || '';
-  if (!raw) return '';
-  if (raw.startsWith('+')) return raw.replace(/\s+/g, '');
-  const digits = raw.replace(/\D/g, '');
-  if (digits.startsWith('233')) return `+${digits}`;
-  if (digits.startsWith('0')) return `+233${digits.slice(1)}`;
-  return `+${digits}`;
+const unverifiedPaymentStatus = (row) => {
+  if (row.checkout_request_id) return 'Pending';
+  const status = cleanText(row.payment_status ?? row.status).toLowerCase();
+  return ['Paid', 'Failed', 'Cancelled'].find(value => value.toLowerCase() === status) || 'Pending';
 };
-
-const createOrderId = () => {
-  const stamp = new Date().toISOString().replace(/\D/g, '').slice(0, 14);
-  const suffix = crypto.randomBytes(3).toString('hex').toUpperCase();
-  return `OV-${stamp}-${suffix}`;
-};
-
-const isHubtelConfigured = () => Boolean(
-  HUBTEL_CLIENT_ID &&
-  HUBTEL_CLIENT_SECRET &&
-  HUBTEL_MERCHANT_ACCOUNT &&
-  HUBTEL_CALLBACK_URL &&
-  HUBTEL_RETURN_URL
-);
 
 const getOrders = async () => {
-  if (isSupabaseConfigured()) {
-    try {
-      const rows = await supabaseRequest('orders?select=*&order=created_at.desc');
-      return Array.isArray(rows) ? rows.map(mapOrderFromDb) : [];
-    } catch (error) {
-      logSupabaseError('Supabase orders read failed, using JSON fallback:', error);
-    }
+  if (!isSupabaseConfigured()) {
+    const orders = readJsonFile(ORDERS_FILE, []);
+    return Array.isArray(orders) ? orders : [];
   }
 
-  const orders = readJsonFile(ORDERS_FILE, []);
-  return Array.isArray(orders) ? orders : [];
+  // PostgREST may cap rows per response. A unique cursor visits every page.
+  const orders = [];
+  let cursor;
+  do {
+    const query = new URLSearchParams({ order: 'id.asc', limit: '500' });
+    if (cursor !== undefined) query.set('id', `gt.${cursor}`);
+    const rows = await supabaseRequest(`orders?${ORDER_PROJECTION}&${query}`);
+    if (!rows.length) break;
+    orders.push(...rows.map(mapOrderFromDb));
+    cursor = rows[rows.length - 1].order_id_text;
+  } while (true);
+  return orders.sort((first, second) => Date.parse(second.createdAt) - Date.parse(first.createdAt));
 };
 
-const saveOrders = async (orders) => {
-  if (isSupabaseConfigured()) {
-    try {
-      await supabaseRequest('orders?on_conflict=id', {
-        method: 'POST',
-        headers: { Prefer: 'resolution=merge-duplicates' },
-        body: JSON.stringify((Array.isArray(orders) ? orders : []).map(mapOrderToDb))
-      });
-      return true;
-    } catch (error) {
-      logSupabaseError('Supabase orders save failed:', error);
-      return false;
-    }
-  }
-
-  return writeJsonFile(ORDERS_FILE, Array.isArray(orders) ? orders : []);
+const readSupabaseBrandSettings = async () => {
+  const rows = await supabaseRequest('brand_settings?select=*&id=eq.1&limit=1');
+  return rows[0] ? mapSettingsFromDb(rows[0]) : null;
 };
-
-const normalizeBrandSetting = (value) => typeof value === 'string' ? value.trim() : value;
 
 const getBrandSettings = async () => {
   if (isSupabaseConfigured()) {
     try {
-      const rows = await supabaseRequest('brand_settings?select=*&id=eq.1&limit=1');
-      if (Array.isArray(rows) && rows[0]) {
-        return { ...DEFAULT_BRAND_SETTINGS, ...mapSettingsFromDb(rows[0]) };
-      }
+      const settings = await readSupabaseBrandSettings();
+      if (settings) return { ...DEFAULT_BRAND_SETTINGS, ...settings };
 
       await saveBrandSettings(DEFAULT_BRAND_SETTINGS);
       return { ...DEFAULT_BRAND_SETTINGS };
@@ -619,14 +528,12 @@ const getBrandSettings = async () => {
 };
 
 const saveBrandSettings = async (settings) => {
-  const nextSettings = { ...DEFAULT_BRAND_SETTINGS, ...(settings || {}) };
-
   if (isSupabaseConfigured()) {
     try {
       await supabaseRequest('brand_settings?on_conflict=id', {
         method: 'POST',
         headers: { Prefer: 'resolution=merge-duplicates' },
-        body: JSON.stringify(mapSettingsToDb(nextSettings))
+        body: JSON.stringify(mapSettingsToDb(settings))
       });
       return true;
     } catch (error) {
@@ -635,65 +542,53 @@ const saveBrandSettings = async (settings) => {
     }
   }
 
-  return writeJsonFile(SETTINGS_FILE, nextSettings);
+  return writeJsonFile(SETTINGS_FILE, { ...await getBrandSettings(), ...settings });
 };
 
-const normalizeBrandPayload = async (body) => {
-  const current = await getBrandSettings();
+const normalizeBrandPayload = (body, storefront) => {
   const updates = {};
-  [
-    'brandName',
-    'heroEyebrow',
-    'heroHeadlinePrefix',
-    'heroSubtitle',
-    'heroBackgroundImage',
-    'heroBackgroundWebp',
-    'whatsappNumber'
-  ].forEach((key) => {
+  for (const key of [
+    'brandName', 'heroEyebrow', 'heroHeadlinePrefix', 'heroSubtitle', 'heroBackgroundImage', 'heroBackgroundWebp'
+  ]) {
     if (body[key] !== undefined) {
-      const nextValue = normalizeBrandSetting(body[key]);
-      if ((key === 'heroBackgroundImage' || key === 'heroBackgroundWebp') && /^blob:/i.test(nextValue || '')) {
-        updates[key] = current[key] || DEFAULT_BRAND_SETTINGS[key];
-      } else {
-        updates[key] = nextValue || DEFAULT_BRAND_SETTINGS[key];
-      }
+      const value = typeof body[key] === 'string' ? body[key].trim() : '';
+      if ((key === 'heroBackgroundImage' || key === 'heroBackgroundWebp') && /^blob:/i.test(value)) continue;
+      updates[key] = value || DEFAULT_BRAND_SETTINGS[key];
     }
-  });
-  return { ...current, ...updates };
+  }
+
+  if (body.whatsappNumber !== undefined) {
+    const number = toE164(body.whatsappNumber);
+    if (!number) throw checkoutError(400, 'Enter a valid WhatsApp order number with its country code.');
+    updates.whatsappNumber = number;
+  }
+  if (body.momoNumber !== undefined) {
+    const number = toGhanaPhone(body.momoNumber);
+    if (body.momoNumber !== '' && !number) throw checkoutError(400, 'Enter a valid Ghanaian MoMo number.');
+    updates.momoNumber = number;
+  }
+  if (body.momoAccountName !== undefined) {
+    const name = cleanText(body.momoAccountName);
+    if (name.length > 120) throw checkoutError(400, 'Use up to 120 characters for the MoMo account name.');
+    updates.momoAccountName = name;
+  }
+  if (body.pickupLocation !== undefined) {
+    const location = cleanText(body.pickupLocation);
+    if (!location || location.length > 180) throw checkoutError(400, 'Enter a pickup location of up to 180 characters.');
+    updates.pickupLocation = location;
+  }
+  if (body.campusDeliveryFee !== undefined) {
+    const fee = String(body.campusDeliveryFee);
+    if (!/^\d{1,7}(\.\d{1,2})?$/.test(fee)) {
+      throw checkoutError(400, 'Enter a campus delivery fee of zero or more, with up to two decimal places.');
+    }
+    updates.campusDeliveryFee = Number(fee);
+  }
+
+  if (body.storefront !== undefined) updates.storefront = normalizeStorefront(body.storefront, storefront);
+
+  return updates;
 };
-
-const normalizeOrderPayload = (body) => {
-  const customer = body.customer || {};
-  const items = Array.isArray(body.items) ? body.items : [];
-  const normalizedItems = items.map((item) => {
-    const quantity = Number(item.quantity);
-    const unitPrice = Number(item.unitPrice ?? item.price);
-    return {
-      productId: item.productId ?? item.id ?? null,
-      name: normalizeOrderInput(item.name) || 'Fragrance',
-      category: normalizeCategory(item.category) || normalizeOrderInput(item.category) || '',
-      quantity: Number.isFinite(quantity) && quantity > 0 ? quantity : 1,
-      unitPrice: Number.isFinite(unitPrice) && unitPrice >= 0 ? unitPrice : 0,
-      image: normalizeOrderInput(item.image) || ''
-    };
-  }).filter(item => item.name && item.quantity > 0);
-
-  const totalAmount = normalizedItems.reduce((sum, item) => sum + (item.unitPrice * item.quantity), 0);
-  const paymentMethod = normalizeOrderInput(body.paymentMethod) || 'WhatsApp';
-
-  return {
-    customerName: normalizeOrderInput(customer.name || body.customerName),
-    customerPhone: normalizeOrderInput(customer.phone || body.customerPhone),
-    deliveryPhone: normalizeOrderInput(customer.deliveryPhone || body.deliveryPhone || customer.phone || body.customerPhone),
-    deliveryAddress: normalizeOrderInput(customer.deliveryAddress || body.deliveryAddress || body.address),
-    cityRegion: normalizeOrderInput(customer.cityRegion || body.cityRegion || body.city),
-    items: normalizedItems,
-    totalAmount,
-    paymentMethod
-  };
-};
-
-const formatCurrency = (value) => `GHS ${Number(value || 0).toFixed(2)}`;
 
 const buildOrderNotificationText = (order) => {
   const items = Array.isArray(order.items) ? order.items : [];
@@ -701,8 +596,10 @@ const buildOrderNotificationText = (order) => {
     `New OMAN'S VOGUE order: ${order.id}`,
     `Customer: ${order.customerName}`,
     `Phone: ${order.customerPhone}`,
-    `Delivery phone: ${order.deliveryPhone}`,
-    `Address: ${order.deliveryAddress}, ${order.cityRegion}`,
+    `Fulfilment: ${order.fulfilmentMethod}`,
+    order.fulfilmentMethod === 'pickup'
+      ? `Pickup: ${order.pickupLocation}`
+      : `Delivery: ${order.deliveryAddress}`,
     `Total: ${formatCurrency(order.totalAmount)}`,
     `Payment: ${order.paymentMethod} (${order.paymentStatus})`,
     `Status: ${order.orderStatus}`,
@@ -738,6 +635,7 @@ const sendWhatsAppOrderNotification = async (order) => {
     return;
   }
 
+  const { momoPhone, paymentReference, customerEmail, ...alertOrder } = order;
   await fetch(WHATSAPP_ALERT_WEBHOOK_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -745,7 +643,7 @@ const sendWhatsAppOrderNotification = async (order) => {
       to: ADMIN_WHATSAPP_NUMBER,
       orderId: order.id,
       message: buildOrderNotificationText(order),
-      order
+      order: alertOrder
     })
   });
 };
@@ -763,110 +661,92 @@ const notifyAdminNewOrder = (order) => {
   });
 };
 
+const orderStatus = (status) => {
+  const normalized = cleanText(status).toLowerCase().replace(/[-_]/g, ' ');
+  if (normalized === 'out for delivery') return 'Processing';
+  if (normalized === 'canceled') return 'Cancelled';
+  return ORDER_STATUSES.find(value => value.toLowerCase() === normalized) || 'Pending';
+};
+
+const statusForDb = (status, current) => {
+  if (current && current === current.toUpperCase()) return status.toUpperCase();
+  if (!current || current === current.toLowerCase()) return status.toLowerCase();
+  return status;
+};
+
+const dateRanges = (now = new Date()) => ({
+  startOfToday: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())),
+  startOfMonth: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))
+});
+
 const buildOrderAnalytics = (orders, products) => {
   const now = new Date();
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-  const paidOrders = orders.filter(order => order.paymentStatus === 'Paid');
-  const revenue = (list) => list.reduce((sum, order) => sum + Number(order.totalAmount || 0), 0);
+  const year = now.getUTCFullYear();
+  const { startOfToday, startOfMonth } = dateRanges(now);
+  const paidOrders = orders.filter(isConfirmedPaid);
+  const revenue = (list) => list.reduce((sum, order) => sum + toPesewas(order.totalAmount), 0) / 100;
   const productSales = new Map();
   const categorySales = { Men: 0, Women: 0 };
   const monthlyRevenue = Array.from({ length: 12 }, (_, index) => ({
-    month: new Date(now.getFullYear(), index, 1).toLocaleString('en', { month: 'short' }),
+    month: new Date(Date.UTC(year, index, 1)).toLocaleString('en', { month: 'short', timeZone: 'UTC' }),
     revenue: 0,
     orders: 0
   }));
-  const ordersByStatus = ORDER_STATUSES.reduce((acc, status) => ({ ...acc, [status]: 0 }), {});
+  const ordersByStatus = Object.fromEntries(ORDER_STATUSES.map(status => [status, 0]));
 
-  orders.forEach((order) => {
+  for (const order of orders) {
     const created = new Date(order.createdAt);
-    if (!Number.isNaN(created.getTime()) && created.getFullYear() === now.getFullYear()) {
-      const bucket = monthlyRevenue[created.getMonth()];
-      if (bucket) {
-        bucket.orders += 1;
-        if (order.paymentStatus === 'Paid') {
-          bucket.revenue += Number(order.totalAmount || 0);
-        }
-      }
+    if (created.getUTCFullYear() === year) monthlyRevenue[created.getUTCMonth()].orders += 1;
+    ordersByStatus[orderStatus(order.orderStatus)] += 1;
+  }
+
+  for (const order of paidOrders) {
+    const verified = new Date(order.paymentVerifiedAt);
+    if (verified.getUTCFullYear() === year) {
+      monthlyRevenue[verified.getUTCMonth()].revenue += toPesewas(order.totalAmount);
     }
 
-    const orderStatus = order.orderStatus === 'New'
-      ? 'Pending'
-      : order.orderStatus === 'Out for Delivery'
-        ? 'Processing'
-        : ORDER_STATUSES.includes(order.orderStatus)
-          ? order.orderStatus
-          : 'Pending';
-    ordersByStatus[orderStatus] = (ordersByStatus[orderStatus] || 0) + 1;
-
-    const items = Array.isArray(order.items) ? order.items : [];
-    items.forEach((item) => {
-      const quantity = Number(item.quantity || 0);
-      const sales = Number(item.unitPrice || 0) * quantity;
-      const current = productSales.get(item.name) || { name: item.name, quantity: 0, revenue: 0 };
+    for (const item of order.items || []) {
+      const quantity = Number(item?.quantity);
+      const price = toPesewas(item?.unitPrice ?? item?.price ?? 0);
+      if (!Number.isSafeInteger(quantity) || quantity <= 0 || !Number.isSafeInteger(price) || price < 0) continue;
+      const sales = price * quantity;
+      const productId = item.productId ?? item.id ?? null;
+      const key = productId == null ? `name:${item.name}` : `id:${productId}`;
+      const current = productSales.get(key) || { key, productId, name: item.name, quantity: 0, revenue: 0 };
       current.quantity += quantity;
       current.revenue += sales;
-      productSales.set(item.name, current);
+      productSales.set(key, current);
 
-      if (item.category === 'Men' || item.category === "Men's Collection") {
-        categorySales.Men += sales;
-      }
-      if (item.category === 'Women' || item.category === "Women's Collection") {
-        categorySales.Women += sales;
-      }
-    });
-  });
-
-  const ordersToday = orders.filter(order => {
-    const created = new Date(order.createdAt);
-    return !Number.isNaN(created.getTime()) && created >= startOfToday;
-  });
-  const ordersThisMonth = orders.filter(order => {
-    const created = new Date(order.createdAt);
-    return !Number.isNaN(created.getTime()) && created >= startOfMonth;
-  });
-  const paidToday = ordersToday.filter(order => order.paymentStatus === 'Paid');
-  const paidThisMonth = ordersThisMonth.filter(order => order.paymentStatus === 'Paid');
-  const bestSellingPerfume = [...productSales.values()].sort((a, b) => b.quantity - a.quantity)[0] || null;
-  const bestSellingProducts = [...productSales.values()].sort((a, b) => b.quantity - a.quantity).slice(0, 5);
-
-  return {
-    totalOrders: orders.length,
-    ordersToday: ordersToday.length,
-    ordersThisMonth: ordersThisMonth.length,
-    totalRevenue: revenue(paidOrders),
-    revenueToday: revenue(paidToday),
-    revenueThisMonth: revenue(paidThisMonth),
-    pendingOrders: orders.filter(order => order.paymentStatus === 'Pending' || order.orderStatus === 'Pending' || order.orderStatus === 'New').length,
-    paidOrders: paidOrders.length,
-    deliveredOrders: orders.filter(order => order.orderStatus === 'Delivered').length,
-    cancelledOrders: orders.filter(order => order.orderStatus === 'Cancelled').length,
-    bestSellingPerfume,
-    bestSellingProducts,
-    lowStockCount: products.filter(product => product.inStock === false).length,
-    monthlySales: monthlyRevenue,
-    ordersByStatus,
-    collectionSales: categorySales
-  };
-};
-
-// Helper to write products
-const saveProducts = async (products) => {
-  if (isSupabaseConfigured()) {
-    try {
-      await supabaseRequest('products?on_conflict=id', {
-        method: 'POST',
-        headers: { Prefer: 'resolution=merge-duplicates' },
-        body: JSON.stringify((Array.isArray(products) ? products : []).map(mapProductToDb))
-      });
-      return true;
-    } catch (error) {
-      logSupabaseError('Supabase products save failed:', error);
-      return false;
+      const category = normalizeCategory(item.category);
+      if (category) categorySales[category] += sales;
     }
   }
 
-  return writeJsonFile(DATA_FILE, Array.isArray(products) ? products : []);
+  const productPerformance = [...productSales.values()].sort((a, b) => b.quantity - a.quantity)
+    .map(product => ({ ...product, revenue: product.revenue / 100 }));
+  const bestSellingProducts = productPerformance.slice(0, 5);
+  return {
+    totalOrders: orders.length,
+    ordersToday: orders.filter(order => new Date(order.createdAt) >= startOfToday).length,
+    ordersThisMonth: orders.filter(order => new Date(order.createdAt) >= startOfMonth).length,
+    totalRevenue: revenue(paidOrders),
+    revenueToday: revenue(paidOrders.filter(order => new Date(order.paymentVerifiedAt) >= startOfToday)),
+    revenueThisMonth: revenue(paidOrders.filter(order => new Date(order.paymentVerifiedAt) >= startOfMonth)),
+    pendingOrders: ordersByStatus.Pending,
+    pendingPayments: orders.filter(order => !isConfirmedPaid(order) && orderStatus(order.orderStatus) !== 'Cancelled' &&
+      ['Pending', 'Paid'].includes(order.paymentStatus)).length,
+    paidOrders: paidOrders.length,
+    deliveredOrders: ordersByStatus.Delivered,
+    cancelledOrders: ordersByStatus.Cancelled,
+    bestSellingPerfume: bestSellingProducts[0] || null,
+    bestSellingProducts,
+    productPerformance,
+    lowStockCount: products.filter(product => !productAvailable(product)).length,
+    monthlySales: monthlyRevenue.map(month => ({ ...month, revenue: month.revenue / 100 })),
+    ordersByStatus,
+    collectionSales: { Men: categorySales.Men / 100, Women: categorySales.Women / 100 }
+  };
 };
 
 app.get('/api/health', (req, res) => {
@@ -884,17 +764,23 @@ app.get('/health', (req, res) => {
 // API: Public brand settings
 app.get(['/api/brand-settings', '/api/settings'], async (req, res) => {
   res.set('Cache-Control', 'no-store');
-  res.json(await getBrandSettings());
+  const { momoNumber, momoAccountName, ...publicSettings } = await getBrandSettings();
+  res.json(publicSettings);
 });
 
+app.get('/api/admin/settings', authenticateAdmin, route(async (req, res) => {
+  res.json(await getBrandSettings());
+}));
+
 // API: Update brand settings
-const updateBrandSettings = async (req, res) => {
-  const settings = await normalizeBrandPayload(req.body || {});
-  if (!await saveBrandSettings(settings)) {
+const updateBrandSettings = route(async (req, res) => {
+  const stored = req.body?.storefront === undefined ? undefined : (await getBrandSettings()).storefront;
+  const updates = normalizeBrandPayload(req.body || {}, stored);
+  if (!await saveBrandSettings(updates)) {
     return res.status(500).json({ error: 'Failed to save brand settings' });
   }
-  res.json(settings);
-};
+  res.json(await getBrandSettings());
+});
 
 app.patch(['/api/brand-settings', '/api/settings'], authenticateAdmin, updateBrandSettings);
 app.post(['/api/brand-settings', '/api/settings'], authenticateAdmin, updateBrandSettings);
@@ -911,8 +797,8 @@ app.post(['/api/brand-settings/hero', '/api/settings/hero'], authenticateAdmin, 
   if (!isSupabaseConfigured()) {
     return res.status(503).json({
       error: 'Supabase is not configured',
-      message: 'Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY on Render before uploading hero images.',
-      setupSql: SUPABASE_TABLE_SQL
+      message: 'Set SUPABASE_URL and a backend Supabase key on Render before uploading hero images.',
+      migration: SUPABASE_MIGRATION
     });
   }
 
@@ -979,22 +865,16 @@ app.post(['/api/brand-settings/hero', '/api/settings/hero'], authenticateAdmin, 
     }
 
     try {
-      const settings = {
-        ...await getBrandSettings(),
-        heroBackgroundImage: imageUrl,
-        heroBackgroundWebp: imageUrl
-      };
-
-      if (!await saveBrandSettings(settings)) {
+      if (!await saveBrandSettings({ heroBackgroundImage: imageUrl, heroBackgroundWebp: imageUrl })) {
         return res.status(424).json({
           error: 'Hero image uploaded, but Supabase settings save failed',
           message: 'Cloudinary upload succeeded, but brand_settings could not be updated. Confirm the brand_settings table exists and service role key is valid.',
           imageUrl,
-          setupSql: SUPABASE_TABLE_SQL
+          migration: SUPABASE_MIGRATION
         });
       }
 
-      return res.json({ imageUrl, settings });
+      return res.json({ imageUrl, settings: await getBrandSettings() });
     } catch (settingsError) {
       console.error('[Oman’s Vogue Server] Hero settings save crashed:', settingsError.details || settingsError.message, settingsError);
       return res.status(424).json({
@@ -1006,171 +886,106 @@ app.post(['/api/brand-settings/hero', '/api/settings/hero'], authenticateAdmin, 
 });
 
 // API: Admin Authentication (Login)
-app.post('/api/auth/login', (req, res) => {
-  const { username, password } = req.body;
-  if (!username || !password) {
-    return res.status(400).json({ error: 'Username and password are required' });
-  }
-  if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
-    const token = jwt.sign({ username }, JWT_SECRET, { expiresIn: '24h' });
-    res.json({ token, username });
-  } else {
-    res.status(401).json({ error: 'Invalid username or password' });
-  }
-});
+app.post('/api/auth/login', login);
+app.patch('/api/auth/password', authenticateAdmin, changePassword);
 
-// API: Verify Admin Token
 app.get('/api/auth/verify', authenticateAdmin, (req, res) => {
   res.json({ valid: true, username: req.admin.username });
 });
 
-// API: Get all products
-app.get('/api/products', async (req, res) => {
-  const wantsFresh = req.query.fresh === '1' || Boolean(req.headers.authorization);
-  res.set(
-    'Cache-Control',
-    wantsFresh ? 'no-store' : 'public, max-age=30, s-maxage=300, stale-while-revalidate=600'
-  );
-  const products = await getProducts();
-  res.json(products);
-});
+// Public catalogue and confirmed sales rankings.
+app.get('/api/products', route(async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json((await getProducts()).map(product => publicProduct(product)));
+}));
 
-// API: Add new product
-app.post('/api/products', authenticateAdmin, async (req, res) => {
-  const { name, category, price, inStock, description, notes, image } = req.body;
-  
-  const normalizedName = normalizeProductInput(name);
-  const normalizedCategory = normalizeCategory(category);
-  const numericPrice = Number(price);
+app.get('/api/admin/products', authenticateAdmin, route(async (req, res) => {
+  res.json((await getProducts()).map(product => publicProduct(product, true)));
+}));
 
-  if (!normalizedName || !normalizedCategory || !Number.isFinite(numericPrice) || numericPrice <= 0) {
-    return res.status(400).json({ error: 'Name, valid category, and positive price are required' });
+app.get('/api/storefront/best-sellers', route(async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  if (!isSupabaseConfigured()) return res.json([]);
+  const ranks = await supabaseRequest('rpc/omans_confirmed_bestsellers');
+  res.json(ranks.map(row => ({ productId: row.product_id, units: Number(row.units) })));
+}));
+
+const saveLocalCatalogue = (products) => {
+  if (!writeJsonFile(DATA_FILE, products)) throw new Error('Failed to save products');
+};
+
+app.post('/api/products', authenticateAdmin, route(async (req, res) => {
+  const product = productPayload(req.body || {});
+  if (isSupabaseConfigured()) {
+    const [row] = await supabaseRequest(`products?${PRODUCT_PROJECTION}`, {
+      method: 'POST',
+      headers: { Prefer: 'return=representation,missing=default' },
+      body: JSON.stringify(mapProductToDb(product))
+    });
+    return res.status(201).json(publicProduct(mapProductFromDb(row), true));
   }
 
-  const products = await getProducts();
-  const nextId = products.length > 0 ? Math.max(...products.map(p => p.id)) + 1 : 1;
+  const products = readLocalProducts();
+  const id = Math.max(0, ...products.map(product => Number(product.id))) + 1;
+  const added = { ...product, id, createdAt: new Date().toISOString(), catalogVersion: '0' };
+  saveLocalCatalogue([...products, added]);
+  return res.status(201).json(publicProduct(added, true));
+}));
 
-  const newProduct = {
-    id: nextId,
-    name: normalizedName,
-    category: normalizedCategory,
-    price: numericPrice,
-    inStock: inStock === undefined ? true : inStock === true || inStock === 'true',
-    description: normalizeProductInput(description) || '',
-    notes: normalizeProductInput(notes) || '',
-    image: normalizeStoredImage(image, normalizedCategory === 'Women' ? '/images/products/women_placeholder.png' : '/images/products/men_placeholder.png')
+const updateProduct = async (id, body, archive = false) => {
+  const productId = parseProductId(id);
+  if (!productId) return null;
+  const stamp = new Date().toISOString();
+  const checkVersion = (current) => {
+    if (body.catalogVersion !== undefined && String(body.catalogVersion) !== current.catalogVersion) {
+      throw checkoutError(409, 'This product changed. Reopen it with the latest stock and try again.');
+    }
   };
 
-  products.push(newProduct);
-  const success = await saveProducts(products);
-
-  if (success) {
-    res.status(201).json(newProduct);
-  } else {
-    res.status(500).json({ error: 'Failed to write to database' });
-  }
-});
-
-// API: Update product (e.g. toggle stock, edit details)
-app.patch('/api/products/:id', authenticateAdmin, async (req, res) => {
-  const productId = Number(req.params.id);
-  const updates = req.body;
-  
-  const products = await getProducts();
-  const index = products.findIndex(p => p.id === productId);
-
-  if (index === -1) {
-    return res.status(404).json({ error: 'Product not found' });
-  }
-
-  const updatedProduct = { ...products[index], ...updates };
-
-  if (updates.name !== undefined) {
-    const normalizedName = normalizeProductInput(updates.name);
-    if (!normalizedName) {
-      return res.status(400).json({ error: 'Name is required' });
-    }
-    updatedProduct.name = normalizedName;
-  }
-
-  if (updates.category !== undefined) {
-    const normalizedCategory = normalizeCategory(updates.category);
-    if (!normalizedCategory) {
-      return res.status(400).json({ error: 'Valid category is required' });
-    }
-    updatedProduct.category = normalizedCategory;
-  }
-
-  if (updates.price !== undefined) {
-    const numericPrice = Number(updates.price);
-    if (!Number.isFinite(numericPrice) || numericPrice <= 0) {
-      return res.status(400).json({ error: 'Price must be a positive number' });
-    }
-    updatedProduct.price = numericPrice;
-  }
-
-  if (updates.inStock !== undefined) {
-    updatedProduct.inStock = updates.inStock === true || updates.inStock === 'true';
-  }
-
-  if (updates.in_stock !== undefined) {
-    updatedProduct.inStock = updates.in_stock === true || updates.in_stock === 'true';
-  }
-
-  if (updates.stock_status !== undefined) {
-    updatedProduct.inStock = normalizeProductInput(updates.stock_status).toLowerCase() !== 'out of stock';
-  }
-
-  if (updates.description !== undefined) {
-    updatedProduct.description = normalizeProductInput(updates.description) || '';
-  }
-
-  if (updates.notes !== undefined) {
-    updatedProduct.notes = normalizeProductInput(updates.notes) || '';
-  }
-
-  if (updates.image !== undefined || updates.image_url !== undefined) {
-    updatedProduct.image = normalizeStoredImage(updates.image_url || updates.image, products[index].image || (updatedProduct.category === 'Women' ? '/images/products/women_placeholder.png' : '/images/products/men_placeholder.png'));
-  }
-
-  products[index] = updatedProduct;
-  const success = await saveProducts(products);
-
-  if (success) {
-    res.json(updatedProduct);
-  } else {
-    res.status(500).json({ error: 'Failed to update database' });
-  }
-});
-
-// API: Delete product
-app.delete('/api/products/:id', authenticateAdmin, async (req, res) => {
-  const productId = Number(req.params.id);
-  const products = await getProducts();
-  
-  const filtered = products.filter(p => p.id !== productId);
-  if (products.length === filtered.length) {
-    return res.status(404).json({ error: 'Product not found' });
-  }
-
-  let success = false;
   if (isSupabaseConfigured()) {
-    try {
-      await supabaseRequest(`products?id=eq.${encodeURIComponent(productId)}`, { method: 'DELETE' });
-      success = true;
-    } catch (error) {
-      logSupabaseError('Supabase product delete failed:', error);
-      success = false;
+    const resource = `products?${PRODUCT_PROJECTION}&id=eq.${productId}&archived_at=is.null`;
+    const [existing] = await supabaseRequest(resource);
+    if (!existing) return null;
+    const current = mapProductFromDb(existing);
+    checkVersion(current);
+    let values = { archived_at: stamp, updated_at: stamp };
+    if (!archive) {
+      const previous = mapProductToDb(current);
+      const next = mapProductToDb(productPayload(body, current));
+      values = Object.fromEntries(Object.entries(next).filter(([key, value]) =>
+        key === 'updated_at' || JSON.stringify(value) !== JSON.stringify(previous[key])
+      ));
     }
-  } else {
-    success = await saveProducts(filtered);
+    const [row] = await supabaseRequest(`${resource}&catalog_version=eq.${current.catalogVersion}`, {
+      method: 'PATCH',
+      headers: { Prefer: 'return=representation' },
+      body: JSON.stringify(values)
+    });
+    if (!row) throw checkoutError(409, 'This product changed. Refresh the catalogue and try again.');
+    return mapProductFromDb(row);
   }
-  if (success) {
-    res.json({ message: 'Product deleted successfully', id: productId });
-  } else {
-    res.status(500).json({ error: 'Failed to save database' });
-  }
-});
+
+  const products = readLocalProducts();
+  const index = products.findIndex(product => String(product.id) === productId && !product.archivedAt);
+  if (index < 0) return null;
+  const current = products[index];
+  checkVersion(current);
+  const updated = archive ? { ...current, archivedAt: stamp } : productPayload(body, current);
+  updated.catalogVersion = String(BigInt(current.catalogVersion) + 1n);
+  products[index] = updated;
+  saveLocalCatalogue(products);
+  return updated;
+};
+
+app.patch('/api/products/:id', authenticateAdmin, route(async (req, res) => {
+  const product = await updateProduct(req.params.id, req.body || {});
+  return product ? res.json(publicProduct(product, true)) : res.status(404).json({ error: 'Product not found.' });
+}));
+
+app.delete('/api/products/:id', authenticateAdmin, route(async (req, res) => {
+  const product = await updateProduct(req.params.id, {}, true);
+  return product ? res.json({ id: product.id }) : res.status(404).json({ error: 'Product not found.' });
+}));
 
 // API: Handle image upload
 app.post('/api/upload', authenticateAdmin, (req, res) => {
@@ -1182,40 +997,39 @@ app.post('/api/upload', authenticateAdmin, (req, res) => {
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
-    let savedFilename = req.file.filename;
+    const savedFilename = `${path.parse(req.file.filename).name}-optimized.webp`;
+    const uploadPath = path.join(UPLOADS_DIR, savedFilename);
 
     try {
-      const parsed = path.parse(req.file.filename);
-      const webpFilename = `${parsed.name}.webp`;
-      const webpPath = path.join(UPLOADS_DIR, webpFilename);
 
       await sharp(req.file.path)
         .rotate()
         .resize({ width: 1400, height: 1400, fit: 'inside', withoutEnlargement: true })
         .webp({ quality: 82, effort: 5 })
-        .toFile(webpPath);
+        .toFile(uploadPath);
 
       fs.unlink(req.file.path, () => {});
-      savedFilename = webpFilename;
-    } catch (conversionError) {
-      console.warn('[Oman’s Vogue Server] Image optimization failed, using original upload.', conversionError);
+    } catch {
+      fs.unlink(req.file.path, () => {});
+      fs.unlink(uploadPath, () => {});
+      return res.status(400).json({ error: 'Choose a valid image file.' });
     }
 
     let fileUrl = `/uploads/products/${savedFilename}`;
 
     if (isCloudinaryConfigured()) {
       try {
-        const uploadPath = path.join(UPLOADS_DIR, savedFilename);
         const cloudinaryUrl = await uploadImageToCloudinary({
           filePath: uploadPath,
           folder: 'omans-vogue/products',
-          mimeType: savedFilename.endsWith('.webp') ? 'image/webp' : req.file.mimetype
+          mimeType: 'image/webp'
         });
         if (cloudinaryUrl) {
           fileUrl = cloudinaryUrl;
           fs.unlink(uploadPath, () => {});
         }
       } catch (cloudinaryError) {
+        fs.unlink(uploadPath, () => {});
         console.error('[Oman’s Vogue Server] Cloudinary product upload failed:', cloudinaryError.message);
         return res.status(502).json({ error: 'Cloudinary product image upload failed' });
       }
@@ -1225,241 +1039,210 @@ app.post('/api/upload', authenticateAdmin, (req, res) => {
   });
 });
 
-// API: Create customer order
-app.post('/api/orders', async (req, res) => {
-  const normalized = normalizeOrderPayload(req.body || {});
+const requireCheckoutStorage = () => {
+  if (!isSupabaseConfigured()) {
+    throw checkoutError(503, 'Checkout is temporarily unavailable. Please try again later.');
+  }
+};
 
-  if (
-    !normalized.customerName ||
-    !normalized.customerPhone ||
-    !normalized.deliveryPhone ||
-    !normalized.deliveryAddress ||
-    !normalized.cityRegion ||
-    normalized.items.length === 0 ||
-    normalized.totalAmount <= 0
-  ) {
-    return res.status(400).json({ error: 'Customer details, delivery details, and ordered items are required' });
+const quoteCart = async (items) => {
+  requireCheckoutStorage();
+  if (!checkoutEnabled) throw checkoutError(503, 'Checkout is temporarily paused. Please try again later.');
+  const productIds = [...new Set(items.map(item => item.productId))].join(',');
+  const [settings, rows, customerEmailRequired] = await Promise.all([
+    readSupabaseBrandSettings(),
+    supabaseRequest(`products?${PRODUCT_PROJECTION}&archived_at=is.null&id=in.(${productIds})`),
+    supabaseRequest('rpc/omans_checkout_requires_email')
+  ]);
+  if (typeof customerEmailRequired !== 'boolean') throw new Error('Checkout email requirement is unavailable');
+  return buildQuote(items, rows.map(mapProductFromDb), { ...settings, customerEmailRequired });
+};
+
+app.post('/api/checkout/quote', route(async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json(await quoteCart(parseItems(req.body?.items)));
+}));
+
+const findCheckout = async (requestId) => {
+  const rows = await supabaseRequest(`orders?${ORDER_PROJECTION}&checkout_request_id=eq.${requestId}&limit=1`);
+  return rows[0];
+};
+
+const checkoutReceipt = (row, requestHash) => {
+  if (row.checkout_request_hash !== requestHash) {
+    throw checkoutError(409, 'This submission was already used for different order details.');
+  }
+  const order = mapOrderFromDb(row);
+  const number = row.whatsapp_number.slice(1);
+  return {
+    orderId: order.id,
+    whatsappUrl: `https://wa.me/${number}?text=${encodeURIComponent(buildWhatsAppMessage(order))}`
+  };
+};
+
+app.post('/api/orders', route(async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  requireCheckoutStorage();
+  const submission = parseOrder(req.body || {});
+  const requestHash = hash(submission);
+  const existing = await findCheckout(submission.requestId);
+  if (existing) return res.json(checkoutReceipt(existing, requestHash));
+
+  const quote = await quoteCart(submission.items);
+  if (quote.quoteKey !== submission.quoteKey) {
+    throw checkoutError(409, 'Checkout details changed. Review the updated total and payment instructions before submitting.');
   }
 
+  if (quote.customerEmailRequired && !submission.customerEmail) {
+    throw checkoutError(400, 'Enter a valid contact email for your order.');
+  }
+
+  const delivery = submission.fulfilmentMethod === 'delivery';
+  const deliveryFee = delivery ? quote.campusDeliveryFee : 0;
   const now = new Date().toISOString();
   const order = {
-    id: createOrderId(),
-    customerName: normalized.customerName,
-    customerPhone: normalized.customerPhone,
-    deliveryPhone: normalized.deliveryPhone,
-    deliveryAddress: normalized.deliveryAddress,
-    cityRegion: normalized.cityRegion,
-    items: normalized.items,
-    totalAmount: normalized.totalAmount,
-    paymentMethod: normalized.paymentMethod,
-    paymentStatus: 'Pending',
-    orderStatus: 'Pending',
+    customerName: submission.customerName,
+    customerEmail: submission.customerEmail,
+    customerPhone: submission.customerPhone,
+    fulfilmentMethod: submission.fulfilmentMethod,
+    pickupLocation: delivery ? null : quote.pickupLocation,
+    deliveryPhone: delivery ? submission.customerPhone : '',
+    deliveryAddress: delivery ? `${submission.campusDestination}, ${campus} · ${submission.addressDetails}` : '',
+    cityRegion: delivery ? 'Legon' : '',
+    deliveryFee,
+    items: quote.items,
+    totalAmount: (toPesewas(quote.subtotal) + toPesewas(deliveryFee)) / 100,
+    momoPhone: submission.momoPhone,
+    paymentReference: submission.paymentReference,
+    paymentMethod: 'Mobile Money',
+    whatsappNumber: quote.whatsappNumber,
+    requestId: submission.requestId,
+    requestHash,
     createdAt: now,
-    updatedAt: now,
-    hubtel: null
+    updatedAt: now
   };
 
-  const orders = await getOrders();
-  orders.unshift(order);
-
-  if (!await saveOrders(orders)) {
-    return res.status(500).json({ error: 'Failed to save order' });
-  }
-
-  notifyAdminNewOrder(order);
-
-  return res.status(201).json({
-    order,
-    hubtelConfigured: isHubtelConfigured()
-  });
-});
-
-// API: Admin get orders with filters
-app.get('/api/orders', authenticateAdmin, async (req, res) => {
-  const { period, paymentStatus, orderStatus } = req.query;
-  const now = new Date();
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-
-  let orders = await getOrders();
-
-  if (period === 'today') {
-    orders = orders.filter(order => new Date(order.createdAt) >= startOfToday);
-  }
-  if (period === 'month') {
-    orders = orders.filter(order => new Date(order.createdAt) >= startOfMonth);
-  }
-  if (paymentStatus && paymentStatus !== 'All') {
-    orders = orders.filter(order => order.paymentStatus === paymentStatus);
-  }
-  if (orderStatus && orderStatus !== 'All') {
-    orders = orders.filter(order => {
-      if (orderStatus === 'Pending') {
-        return order.orderStatus === 'Pending' || order.orderStatus === 'New';
-      }
-      if (orderStatus === 'Processing') {
-        return order.orderStatus === 'Processing' || order.orderStatus === 'Out for Delivery';
-      }
-      return order.orderStatus === orderStatus;
-    });
-  }
-
-  res.set('Cache-Control', 'no-store');
-  res.json(orders);
-});
-
-// API: Admin analytics
-app.get(['/api/orders/analytics', '/api/analytics'], authenticateAdmin, async (req, res) => {
-  res.set('Cache-Control', 'no-store');
-  res.json(buildOrderAnalytics(await getOrders(), await getProducts()));
-});
-
-// API: Admin update delivery/order status
-app.patch('/api/orders/:id/status', authenticateAdmin, async (req, res) => {
-  const nextStatus = normalizeOrderInput(req.body?.orderStatus);
-  if (!ACCEPTED_ORDER_STATUSES.includes(nextStatus)) {
-    return res.status(400).json({ error: 'Invalid order status' });
-  }
-
-  const orders = await getOrders();
-  const index = orders.findIndex(order => order.id === req.params.id);
-  if (index === -1) {
-    return res.status(404).json({ error: 'Order not found' });
-  }
-
-  orders[index] = {
-    ...orders[index],
-    orderStatus: nextStatus,
-    updatedAt: new Date().toISOString()
-  };
-
-  if (!await saveOrders(orders)) {
-    return res.status(500).json({ error: 'Failed to update order' });
-  }
-
-  res.json(orders[index]);
-});
-
-// API: Hubtel payment initiation
-app.post('/api/payments/hubtel/initiate', async (req, res) => {
-  if (!isHubtelConfigured()) {
-    return res.json({ configured: false, message: 'Hubtel credentials are not configured' });
-  }
-
-  const { orderId } = req.body || {};
-  const orders = await getOrders();
-  const index = orders.findIndex(order => order.id === orderId);
-  if (index === -1) {
-    return res.status(404).json({ error: 'Order not found' });
-  }
-
-  const order = orders[index];
-  const customerPhone = toGhanaE164(order.customerPhone || order.deliveryPhone);
-  const payload = {
-    amount: Number(order.totalAmount),
-    title: "OMAN'S VOGUE Order",
-    description: `Payment for order ${order.id}`,
-    clientReference: order.id,
-    merchantAccountNumber: HUBTEL_MERCHANT_ACCOUNT,
-    callbackUrl: HUBTEL_CALLBACK_URL,
-    returnUrl: HUBTEL_RETURN_URL,
-    cancellationUrl: HUBTEL_RETURN_URL
-  };
-
+  let inserted;
   try {
-    const auth = Buffer.from(`${HUBTEL_CLIENT_ID}:${HUBTEL_CLIENT_SECRET}`).toString('base64');
-    const response = await fetch(`${HUBTEL_API_BASE_URL}/request-money/${encodeURIComponent(customerPhone)}`, {
+    [inserted] = await supabaseRequest(`orders?${ORDER_PROJECTION}&on_conflict=checkout_request_id`, {
       method: 'POST',
-      headers: {
-        Authorization: `Basic ${auth}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(payload)
-    });
-    const data = await response.json().catch(() => ({}));
-
-    if (!response.ok || !data?.data?.paylinkUrl) {
-      orders[index] = {
-        ...order,
-        hubtel: {
-          ...(order.hubtel || {}),
-          lastError: data?.message || 'Hubtel payment initiation failed',
-          lastResponse: data,
-          attemptedAt: new Date().toISOString()
-        },
-        updatedAt: new Date().toISOString()
-      };
-      await saveOrders(orders);
-      return res.status(502).json({ error: 'Hubtel payment initiation failed', details: data });
-    }
-
-    orders[index] = {
-      ...order,
-      paymentMethod: 'Hubtel',
-      paymentStatus: 'Pending',
-      hubtel: {
-        paylinkId: data.data.paylinkId || '',
-        paylinkUrl: data.data.paylinkUrl,
-        expiresAt: data.data.expiresAt || null,
-        clientReference: data.data.clientReference || order.id,
-        initiatedAt: new Date().toISOString()
-      },
-      updatedAt: new Date().toISOString()
-    };
-    await saveOrders(orders);
-
-    return res.json({
-      configured: true,
-      paymentUrl: data.data.paylinkUrl,
-      order: orders[index]
+      headers: { Prefer: 'resolution=ignore-duplicates,return=representation,missing=default' },
+      body: JSON.stringify(mapOrderToDb(order))
     });
   } catch (error) {
-    console.error('Hubtel initiation error:', error);
-    return res.status(502).json({ error: 'Hubtel payment service unavailable' });
-  }
-});
+    if (error.details?.code !== '23505' || !error.message.includes('omans_orders_momo_reference_key')) throw error;
 
-// API: Hubtel webhook callback
-app.post('/api/payments/hubtel/webhook', async (req, res) => {
-  const payload = req.body || {};
-  const data = payload.data || {};
-  const clientReference = data.clientReference || payload.clientReference;
-
-  if (!clientReference) {
-    return res.status(400).json({ error: 'Missing clientReference' });
+    const saved = await findCheckout(submission.requestId);
+    if (saved) return res.json(checkoutReceipt(saved, requestHash));
+    throw checkoutError(409, 'An order already used this Mobile Money reference. Use your saved WhatsApp receipt or contact support before paying again.');
   }
 
-  const orders = await getOrders();
-  const index = orders.findIndex(order => order.id === clientReference);
-  if (index === -1) {
-    return res.status(404).json({ error: 'Order not found' });
+  if (!inserted) {
+    const saved = await findCheckout(submission.requestId);
+    if (!saved) throw new Error('Order receipt unavailable after insert');
+    return res.json(checkoutReceipt(saved, requestHash));
   }
 
-  const statusText = String(data.status || payload.status || '').toLowerCase();
-  const responseCode = String(payload.responseCode || '').toLowerCase();
-  const isPaid = statusText.includes('paid') || statusText.includes('success') || responseCode === '0000';
-  const isCancelled = statusText.includes('cancel');
-  const isFailed = statusText.includes('fail');
-  const paymentStatus = isPaid ? 'Paid' : isCancelled ? 'Cancelled' : isFailed ? 'Failed' : orders[index].paymentStatus;
+  notifyAdminNewOrder(mapOrderFromDb(inserted));
+  return res.status(201).json(checkoutReceipt(inserted, requestHash));
+}));
 
-  orders[index] = {
-    ...orders[index],
-    paymentStatus,
-    hubtel: {
-      ...(orders[index].hubtel || {}),
-      paymentType: data.paymentType || '',
-      paidPhoneNumber: data.phoneNumber || '',
-      paylinkId: data.paylinkId || orders[index].hubtel?.paylinkId || '',
-      callbackAmount: data.amount ?? null,
-      callbackPayload: payload,
-      callbackReceivedAt: new Date().toISOString()
-    },
-    updatedAt: new Date().toISOString()
-  };
+// API: Admin get orders with filters
+app.get('/api/orders', authenticateAdmin, route(async (req, res) => {
+  const { period, paymentStatus, orderStatus: status } = req.query;
+  const { startOfToday, startOfMonth } = dateRanges();
+  let orders = await getOrders();
 
-  await saveOrders(orders);
-  res.json({ ok: true });
-});
+  if (period === 'today') orders = orders.filter(order => new Date(order.createdAt) >= startOfToday);
+  if (period === 'month') orders = orders.filter(order => new Date(order.createdAt) >= startOfMonth);
+  if (paymentStatus === 'Paid') {
+    orders = orders.filter(isConfirmedPaid);
+  } else if (paymentStatus === 'Pending') {
+    orders = orders.filter(order => !isConfirmedPaid(order) && ['Pending', 'Paid'].includes(order.paymentStatus));
+  } else if (paymentStatus && paymentStatus !== 'All') {
+    orders = orders.filter(order => order.paymentStatus === paymentStatus);
+  }
+  if (status && status !== 'All') {
+    orders = orders.filter(order => orderStatus(order.orderStatus) === orderStatus(status));
+  }
+  res.json(orders);
+}));
+
+app.get(['/api/orders/analytics', '/api/analytics'], authenticateAdmin, route(async (req, res) => {
+  const [orders, products] = await Promise.all([getOrders(), getProducts()]);
+  res.json(buildOrderAnalytics(orders, products));
+}));
+
+const updateOrder = async (id, changes, verifyPayment = false) => {
+  if (!isSupabaseConfigured()) {
+    const orders = readJsonFile(ORDERS_FILE, []);
+    const index = orders.findIndex(order => String(order.id) === id);
+    if (index === -1) return null;
+    if (verifyPayment && isConfirmedPaid(orders[index])) return orders[index];
+    const { status, admin_payment_verified_at, updated_at } = changes;
+    const order = {
+      ...orders[index],
+      ...(status ? { orderStatus: status } : {}),
+      ...(admin_payment_verified_at ? { paymentStatus: 'Paid', paymentVerifiedAt: admin_payment_verified_at } : {}),
+      updatedAt: updated_at
+    };
+    orders[index] = order;
+    if (!writeJsonFile(ORDERS_FILE, orders)) throw new Error('Failed to update local orders');
+    return order;
+  }
+
+  if (!/^-?\d{1,19}$/.test(id) || BigInt(id) < -9223372036854775808n || BigInt(id) > 9223372036854775807n) {
+    return null;
+  }
+
+  const filter = new URLSearchParams({ id: `eq.${id}` });
+  const resource = `orders?${ORDER_PROJECTION}&${filter}`;
+  if (changes.status || verifyPayment) {
+    const [current] = await supabaseRequest(`orders?${filter}&select=status,order_status,payment_status&limit=1`);
+    if (!current) return null;
+    if (changes.status) {
+      changes = {
+        ...changes,
+        order_status: statusForDb(changes.status, current.order_status || 'Pending'),
+        status: statusForDb(changes.status, current.status)
+      };
+    } else {
+      changes = { ...changes, payment_status: statusForDb('Paid', current.payment_status || 'Pending') };
+    }
+  }
+
+  const [updated] = await supabaseRequest(`${resource}${verifyPayment ? '&admin_payment_verified_at=is.null' : ''}`, {
+    method: 'PATCH',
+    headers: { Prefer: 'return=representation' },
+    body: JSON.stringify(changes)
+  });
+  if (updated) return mapOrderFromDb(updated);
+  if (!verifyPayment) return null;
+
+  const [existing] = await supabaseRequest(`${resource}&limit=1`);
+  return existing ? mapOrderFromDb(existing) : null;
+};
+
+app.patch('/api/orders/:id/status', authenticateAdmin, route(async (req, res) => {
+  const nextStatus = cleanText(req.body?.orderStatus);
+  if (!ACCEPTED_ORDER_STATUSES.includes(nextStatus)) {
+    return res.status(400).json({ error: 'Invalid order status.' });
+  }
+  const order = await updateOrder(req.params.id, { status: orderStatus(nextStatus), updated_at: new Date().toISOString() });
+  return order ? res.json(order) : res.status(404).json({ error: 'Order not found.' });
+}));
+
+app.patch('/api/orders/:id/payment', authenticateAdmin, route(async (req, res) => {
+  if (req.body?.paymentStatus !== 'Paid') {
+    return res.status(400).json({ error: 'Confirm that you have verified the payment.' });
+  }
+  const now = new Date().toISOString();
+  const order = await updateOrder(req.params.id, {
+    admin_payment_verified_at: now,
+    updated_at: now
+  }, true);
+  return order ? res.json(order) : res.status(404).json({ error: 'Order not found.' });
+}));
 
 // Serve frontend static build files in production mode
 const frontendBuildPath = path.join(__dirname, '..', 'frontend', 'dist');
@@ -1482,8 +1265,14 @@ app.use((err, req, res, next) => {
   if (err.message && err.message.startsWith('CORS blocked origin')) {
     return res.status(403).json({ error: 'Origin not allowed by CORS policy' });
   }
-  console.error(err);
-  return res.status(500).json({ error: 'Internal server error' });
+  if (err.checkoutStatus) return res.status(err.checkoutStatus).json({ error: err.message });
+  if (err.message === 'omans_checkout_catalogue_changed') {
+    return res.status(409).json({ error: 'An item changed or sold out before the order could be saved. Review your cart.' });
+  }
+  if (err.type === 'entity.parse.failed') return res.status(400).json({ error: 'Invalid JSON request.' });
+  if (err.type === 'entity.too.large') return res.status(413).json({ error: 'Request is too large.' });
+  console.error('[Oman’s Vogue Server] Request failed:', err.message);
+  return res.status(500).json({ error: 'The request could not be completed. Please try again.' });
 });
 
 // Start Server

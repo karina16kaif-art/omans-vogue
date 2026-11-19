@@ -20,7 +20,7 @@ const Hero = ({ onExploreClick, brandSettings }) => {
     const text = encodeURIComponent(
       `Hello ${settings.brandName}! I am visiting your virtual luxury store and would like to seek fragrance recommendations for my personal inner growth. Please guide me through your collections!`
     );
-    window.open(`https://wa.me/${settings.whatsappNumber}?text=${text}`, '_blank');
+    window.open(`https://wa.me/${settings.whatsappNumber.replace(/\D/g, '')}?text=${text}`, '_blank');
   };
 
   return (
@@ -92,7 +92,7 @@ const Hero = ({ onExploreClick, brandSettings }) => {
             className="w-full sm:w-auto px-8 py-4 bg-transparent text-luxury-gold text-xs uppercase tracking-widest font-bold rounded-none border border-luxury-gold/40 hover:border-luxury-gold hover:bg-luxury-gold/5 transition-all duration-300 transform hover:scale-[1.03]"
           >
             <span className="flex items-center justify-center gap-2">
-              Order on WhatsApp
+              Chat on WhatsApp
               <Send size={12} />
             </span>
           </button>
