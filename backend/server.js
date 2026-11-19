@@ -86,6 +86,14 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
+app.use('/api', (req, res, next) => {
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
+  res.set('Cache-Control', 'no-store');
+  return res.status(503).json({
+    code: 'omans_cutover_paused',
+    error: 'Checkout and order updates are temporarily paused. Please try again later.'
+  });
+});
 app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
 app.use('/api', (req, res, next) => {
@@ -543,7 +551,6 @@ const getBrandSettings = async ({ strict = false } = {}) => {
       if (settings) return { ...DEFAULT_BRAND_SETTINGS, ...settings };
 
       if (strict) throw new Error('The storefront settings row is missing.');
-      await saveBrandSettings(DEFAULT_BRAND_SETTINGS);
       return { ...DEFAULT_BRAND_SETTINGS };
     } catch (error) {
       if (strict) throw error;
@@ -780,6 +787,7 @@ const buildOrderAnalytics = (orders, products) => {
 app.get('/api/health', (req, res) => {
   res.json({
     ok: true,
+    cutoverPaused: true,
     service: 'omans-vogue-api',
     environment: process.env.NODE_ENV || 'development'
   });
