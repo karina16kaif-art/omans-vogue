@@ -77,6 +77,16 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
+
+// Temporary deployment used only to freeze legacy storefront writes at cutover.
+app.use((req, res, next) => {
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
+  res.set('Cache-Control', 'no-store');
+  return res.status(503).json({
+    code: 'omans_cutover_paused',
+    error: 'Checkout and store updates are temporarily paused. Please try again later.'
+  });
+});
 app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
 
@@ -273,6 +283,9 @@ const writeJsonFile = (filePath, value) => {
 };
 
 const supabaseRequest = async (resource, options = {}) => {
+  if (options.method && !['GET', 'HEAD'].includes(options.method.toUpperCase())) {
+    throw new Error('Supabase writes are paused during the release cutover.');
+  }
   if (!isSupabaseConfigured()) {
     throw new Error('Supabase is not configured');
   }
@@ -501,16 +514,7 @@ const getProducts = async () => {
   if (isSupabaseConfigured()) {
     try {
       const rows = await supabaseRequest('products?select=*&order=id.asc');
-      if (Array.isArray(rows) && rows.length > 0) {
-        return rows.map(mapProductFromDb);
-      }
-
-      const fallbackProducts = readJsonFile(DATA_FILE, []);
-      if (Array.isArray(fallbackProducts) && fallbackProducts.length > 0) {
-        await saveProducts(fallbackProducts);
-        return fallbackProducts;
-      }
-      return [];
+      return Array.isArray(rows) ? rows.map(mapProductFromDb) : [];
     } catch (error) {
       logSupabaseError('Supabase products read failed, using JSON fallback:', error);
     }
@@ -607,7 +611,6 @@ const getBrandSettings = async () => {
         return { ...DEFAULT_BRAND_SETTINGS, ...mapSettingsFromDb(rows[0]) };
       }
 
-      await saveBrandSettings(DEFAULT_BRAND_SETTINGS);
       return { ...DEFAULT_BRAND_SETTINGS };
     } catch (error) {
       logSupabaseError('Supabase settings read failed, using JSON fallback:', error);
@@ -873,6 +876,7 @@ app.get('/api/health', (req, res) => {
   res.json({
     ok: true,
     service: 'omans-vogue-api',
+    cutoverPaused: true,
     environment: process.env.NODE_ENV || 'development'
   });
 });
@@ -1026,11 +1030,7 @@ app.get('/api/auth/verify', authenticateAdmin, (req, res) => {
 
 // API: Get all products
 app.get('/api/products', async (req, res) => {
-  const wantsFresh = req.query.fresh === '1' || Boolean(req.headers.authorization);
-  res.set(
-    'Cache-Control',
-    wantsFresh ? 'no-store' : 'public, max-age=30, s-maxage=300, stale-while-revalidate=600'
-  );
+  res.set('Cache-Control', 'no-store');
   const products = await getProducts();
   res.json(products);
 });
