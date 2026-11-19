@@ -14,6 +14,7 @@ import { cartKey, lineKey, memberships, optionAvailable, optionPrice, visibleCol
 const ProductModal = lazy(() => import('./components/ProductModal'));
 const CartDrawer = lazy(() => import('./components/CartDrawer'));
 const CheckoutModal = lazy(() => import('./components/CheckoutModal'));
+const EMPTY_CART = [];
 const ModalLoading = () => <p role="status" className="fixed bottom-4 left-4 z-50 bg-luxury-charcoal px-4 py-2 text-sm">Loading…</p>;
 
 const AdminDashboard = lazy(() => import('./components/AdminConsole'));
@@ -57,6 +58,7 @@ const App = () => {
   const [adminChecking, setAdminChecking] = useState(false);
   const verifiedToken = useRef('');
   const isAdminRoute = /^\/admin\/?$/.test(routePath);
+  const isDeliveryCheckout = /^\/checkout\/delivery\/?$/.test(routePath);
 
   useEffect(() => {
     const syncRoute = () => setRoutePath(window.location.pathname);
@@ -75,7 +77,7 @@ const App = () => {
   );
 
   const fetchStorefront = useCallback(async () => {
-    if (isAdminRoute || storefrontRequest.current) return;
+    if (isAdminRoute || isDeliveryCheckout || storefrontRequest.current) return;
     const request = new AbortController();
     storefrontRequest.current = request;
     setCatalogueError('');
@@ -110,10 +112,10 @@ const App = () => {
     } finally {
       if (storefrontRequest.current === request) storefrontRequest.current = null;
     }
-  }, [isAdminRoute]);
+  }, [isAdminRoute, isDeliveryCheckout]);
 
   useEffect(() => {
-    if (isAdminRoute) return;
+    if (isAdminRoute || isDeliveryCheckout) return;
     fetchStorefront();
     window.addEventListener('focus', fetchStorefront);
     return () => {
@@ -121,7 +123,7 @@ const App = () => {
       storefrontRequest.current = null;
       window.removeEventListener('focus', fetchStorefront);
     };
-  }, [fetchStorefront, isAdminRoute]);
+  }, [fetchStorefront, isAdminRoute, isDeliveryCheckout]);
 
   const fetchBrandSettings = useCallback(async (signal, resetForm = false) => {
     if (!isAdminRoute || !adminVerified) return;
@@ -316,6 +318,16 @@ const App = () => {
         [...memberships(product, storefront)].some(group => groups.has(group));
     }).slice(0, 3);
   }, [selectedProduct, products, storefront]);
+
+  if (isDeliveryCheckout) {
+    return (
+      <Suspense fallback={<ModalLoading />}>
+        <CheckoutModal isOpen onClose={navigateToStorefront} cartItems={EMPTY_CART}
+          deliveryQuoteToken={window.location.hash.slice(1)} receipt={checkoutReceipt}
+          onOrderSaved={setCheckoutReceipt} />
+      </Suspense>
+    );
+  }
 
   if (isAdminRoute) {
     return (

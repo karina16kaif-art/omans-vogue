@@ -3,6 +3,7 @@ import { BarChart3, Banknote, CalendarDays, CheckCircle, Filter, LogOut, Package
 import { api } from '../lib/api';
 import AdminProducts from './AdminProducts';
 import BrandSettings from './BrandSettings';
+import DeliveryQuotes from './DeliveryQuotes';
 
 const ORDER_STATUSES = ['Pending', 'Processing', 'Delivered', 'Cancelled'];
 const PAYMENT_STATUSES = ['All', 'Pending', 'Paid', 'Failed', 'Cancelled'];
@@ -263,6 +264,7 @@ const AdminConsole = (props) => {
             </div>
           </div>
 
+          <DeliveryQuotes headers={authHeaders} />
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <div className="p-6 glass-panel">
               <h3 className="text-[10px] uppercase tracking-widest text-luxury-rosegold font-bold mb-5">Orders</h3>
@@ -400,8 +402,8 @@ const AdminConsole = (props) => {
                               ? `Pickup at ${order.pickupLocation}`
                               : [order.deliveryAddress, !order.fulfilmentMethod && order.cityRegion].filter(Boolean).join(', ')}
                           </p>
-                          {order.fulfilmentMethod === 'delivery' && (
-                            <p className="text-sm text-luxury-champagne/75">Campus delivery fee {currency(order.deliveryFee)}</p>
+                          {['delivery', 'outside_campus'].includes(order.fulfilmentMethod) && (
+                            <p className="text-sm text-luxury-champagne/75">{order.fulfilmentMethod === 'delivery' ? 'Campus delivery fee' : 'Confirmed rider fee'} {currency(order.deliveryFee)}</p>
                           )}
                           {order.momoPhone && <p className="text-sm text-luxury-champagne">MoMo phone {order.momoPhone}</p>}
                           {order.paymentReference && <p className="text-sm text-luxury-champagne break-all">Reference {order.paymentReference}</p>}

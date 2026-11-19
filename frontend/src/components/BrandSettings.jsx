@@ -181,8 +181,8 @@ const BrandSettings = ({ token, brandSettings, onBrandSettingsUpdated, onBrandSe
               />
               <span className="text-xs font-normal">Optional directions shown to customers at checkout. Use customer-facing text only.</span>
             </label>
-            <Input label="Pickup location" required maxLength={180} value={settings.pickupLocation} onChange={(value) => handleChange('pickupLocation', value)} />
-            <Input label="Campus delivery fee (GH₵)" type="number" min="0" step="0.01" required value={settings.campusDeliveryFee} onChange={(value) => handleChange('campusDeliveryFee', value)} />
+            <p className="text-sm text-luxury-champagne/80">Free pickup at {settings.pickupLocation}.</p>
+            <p className="text-sm text-luxury-champagne/80">Eligible campus delivery costs GH₵10. Confirm outside-campus fees in Orders.</p>
           </fieldset>
 
           <fieldset className="space-y-4 pt-2">

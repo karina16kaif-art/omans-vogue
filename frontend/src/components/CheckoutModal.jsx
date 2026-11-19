@@ -10,6 +10,9 @@ const initialDetails = {
   fulfilmentMethod: 'pickup',
   campusDestination: '',
   addressDetails: '',
+  area: '',
+  address: '',
+  landmark: '',
   momoPhone: '',
   paymentReference: ''
 };
@@ -20,7 +23,7 @@ const labelClass = 'block space-y-1 text-sm text-luxury-champagne';
 const headingClass = 'text-sm uppercase tracking-widest text-luxury-rosegold font-bold';
 const actionClass = 'w-full py-3 px-4 bg-white text-luxury-black text-sm font-bold flex items-center justify-center gap-2 hover:bg-luxury-gold transition-colors disabled:opacity-50';
 
-const CheckoutModal = ({ isOpen, onClose, cartItems, receipt, onOrderSaved }) => {
+const CheckoutModal = ({ isOpen, onClose, cartItems, receipt, onOrderSaved, deliveryQuoteToken }) => {
   const [details, setDetails] = useState(initialDetails);
   const [quote, setQuote] = useState(null);
   const [quoteError, setQuoteError] = useState('');
@@ -28,7 +31,12 @@ const CheckoutModal = ({ isOpen, onClose, cartItems, receipt, onOrderSaved }) =>
   const [submitting, setSubmitting] = useState(false);
   const [checkoutError, setCheckoutError] = useState('');
   const [paymentSupport, setPaymentSupport] = useState('');
+  const [deliveryRequest, setDeliveryRequest] = useState(null);
   const attempt = useRef(null);
+  const approvedDelivery = deliveryQuoteToken !== undefined;
+  const awaitingDeliveryFee = !approvedDelivery && details.fulfilmentMethod === 'outside_campus';
+  const needsDestination = details.fulfilmentMethod === 'delivery' && !details.campusDestination;
+  const showPayment = !awaitingDeliveryFee && !needsDestination;
   const items = React.useMemo(() => cartItems.map(item => ({
     productId: item.id,
     variantId: item.variantId ?? null,
@@ -36,29 +44,40 @@ const CheckoutModal = ({ isOpen, onClose, cartItems, receipt, onOrderSaved }) =>
   })), [cartItems]);
 
   useEffect(() => {
-    if (!isOpen || receipt || attempt.current || !items.length) return;
+    if (!isOpen || receipt || deliveryRequest || attempt.current || (!approvedDelivery && !items.length)) return;
 
     const controller = new AbortController();
     setQuote(null);
     setQuoteError('');
-    api.post('/api/checkout/quote', { items }, { signal: controller.signal })
-      .then(({ data }) => setQuote(data))
+    const path = approvedDelivery ? '/api/checkout/delivery-quotes/resume' : '/api/checkout/quote';
+    api.post(path, approvedDelivery ? { deliveryQuoteToken } : { items }, { signal: controller.signal })
+      .then(({ data }) => {
+        if (controller.signal.aborted) return;
+        if (data.receipt) onOrderSaved(data.receipt);
+        else setQuote(approvedDelivery ? data.quote : data);
+      })
       .catch((error) => {
         if (!controller.signal.aborted) {
           setQuoteError(error.response?.data?.error || 'Checkout is temporarily unavailable. Please try again.');
         }
       });
     return () => controller.abort();
-  }, [isOpen, items, quoteRevision, receipt]);
+  }, [approvedDelivery, deliveryQuoteToken, deliveryRequest, isOpen, items, onOrderSaved, quoteRevision, receipt]);
 
   const close = () => {
-    if (!submitting) onClose();
+    if (!submitting) {
+      setDeliveryRequest(null);
+      onClose();
+    }
   };
 
   useEffect(() => {
     if (!isOpen) return;
     const handleKey = (event) => {
-      if (event.key === 'Escape' && !submitting) onClose();
+      if (event.key === 'Escape' && !submitting) {
+        setDeliveryRequest(null);
+        onClose();
+      }
     };
     document.addEventListener('keydown', handleKey);
     return () => document.removeEventListener('keydown', handleKey);
@@ -68,23 +87,39 @@ const CheckoutModal = ({ isOpen, onClose, cartItems, receipt, onOrderSaved }) =>
     setDetails(previous => ({ ...previous, [target.name]: target.value }));
   };
 
+  const selectDestination = ({ target }) => {
+    setDetails(previous => ({
+      ...previous,
+      fulfilmentMethod: target.value === 'outside_campus' ? 'outside_campus' : 'delivery',
+      campusDestination: target.value === 'outside_campus' ? '' : target.value
+    }));
+  };
+
   const submitOrder = async (event) => {
     event.preventDefault();
-    if (!quote || submitting) return;
+    if (!quote || submitting || needsDestination) return;
 
     // Reserve a tab during the click so popup blockers do not depend on API timing.
     const whatsappTab = window.open('', '_blank');
     if (whatsappTab) whatsappTab.opener = null;
 
-    attempt.current ||= { ...details, items, quoteKey: quote.quoteKey, requestId: crypto.randomUUID() };
+    const fields = approvedDelivery
+      ? { deliveryQuoteToken, momoPhone: details.momoPhone, paymentReference: details.paymentReference }
+      : { ...details, items };
+    attempt.current ||= {
+      ...fields,
+      ...(awaitingDeliveryFee ? { priceKey: quote.priceKey } : { quoteKey: quote.quoteKey }),
+      requestId: crypto.randomUUID()
+    };
     setSubmitting(true);
     setCheckoutError('');
     setPaymentSupport('');
     let savedOrder;
     const payload = attempt.current;
     try {
-      const { data } = await api.post('/api/orders', payload);
-      if (!data?.orderId || !data.whatsappUrl?.startsWith('https://wa.me/')) {
+      const endpoint = awaitingDeliveryFee ? '/api/checkout/delivery-quotes' : '/api/orders';
+      const { data } = await api.post(endpoint, payload);
+      if (!(awaitingDeliveryFee ? data?.requestId : data?.orderId) || !data.whatsappUrl?.startsWith('https://wa.me/')) {
         throw new Error('Missing order receipt');
       }
       savedOrder = data;
@@ -95,11 +130,11 @@ const CheckoutModal = ({ isOpen, onClose, cartItems, receipt, onOrderSaved }) =>
         attempt.current = null;
         setCheckoutError(error.response?.data?.error || 'Review your order details and try again.');
         if (status === 409) {
-          setPaymentSupport(quote.whatsappNumber || '');
+          if (!awaitingDeliveryFee) setPaymentSupport(quote.whatsappNumber || '');
           setQuoteRevision(previous => previous + 1);
         }
       } else {
-        setCheckoutError('We couldn’t confirm that your order was saved. Retry with the same details.');
+        setCheckoutError('We couldn’t confirm that your submission was saved. Retry with the same details.');
       }
     } finally {
       setSubmitting(false);
@@ -108,7 +143,8 @@ const CheckoutModal = ({ isOpen, onClose, cartItems, receipt, onOrderSaved }) =>
     if (savedOrder) {
       attempt.current = null;
       setDetails(initialDetails);
-      onOrderSaved(savedOrder, payload.items);
+      if (awaitingDeliveryFee) setDeliveryRequest(savedOrder);
+      else onOrderSaved(savedOrder, payload.items);
       try {
         if (whatsappTab && !whatsappTab.closed) whatsappTab.location.replace(savedOrder.whatsappUrl);
       } catch {
@@ -119,9 +155,9 @@ const CheckoutModal = ({ isOpen, onClose, cartItems, receipt, onOrderSaved }) =>
 
   if (!isOpen) return null;
 
-  const delivery = details.fulfilmentMethod === 'delivery';
-  const deliveryFee = delivery ? quote?.campusDeliveryFee : 0;
-  const total = Number(quote?.subtotal) + deliveryFee;
+  const delivery = approvedDelivery || details.fulfilmentMethod !== 'pickup';
+  const deliveryFee = approvedDelivery ? quote?.deliveryFee : delivery ? quote?.campusDeliveryFee : 0;
+  const total = approvedDelivery ? quote?.total : Number(quote?.subtotal) + deliveryFee;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4">
@@ -143,7 +179,7 @@ const CheckoutModal = ({ isOpen, onClose, cartItems, receipt, onOrderSaved }) =>
         </button>
         <header className="text-center px-8 pb-4 mb-5 border-b border-luxury-rosegold/15">
           <h2 id="checkout-title" className="font-serif text-xl tracking-widest text-white uppercase font-black">
-            {receipt ? 'Order saved' : 'Checkout'}
+            {receipt ? 'Order saved' : deliveryRequest ? 'Delivery quote requested' : 'Checkout'}
           </h2>
         </header>
 
@@ -154,6 +190,15 @@ const CheckoutModal = ({ isOpen, onClose, cartItems, receipt, onOrderSaved }) =>
             <p>Open the prefilled WhatsApp message and press <strong>Send</strong> to share your order with us. Your payment is pending manual verification.</p>
             <a href={receipt.whatsappUrl} target="_blank" rel="noopener noreferrer" className={actionClass}>
               <Send size={16} /> Open WhatsApp again
+            </a>
+            <button type="button" onClick={close} className="px-4 py-2 underline underline-offset-4">Done</button>
+          </div>
+        ) : deliveryRequest ? (
+          <div className="space-y-4 text-center text-luxury-champagne">
+            <p>Delivery fee to be confirmed. Wait for the merchant’s approved checkout link before paying.</p>
+            <p>Availability will be checked again before checkout.</p>
+            <a href={deliveryRequest.whatsappUrl} target="_blank" rel="noopener noreferrer" className={actionClass}>
+              <Send size={16} /> Open WhatsApp and press Send
             </a>
             <button type="button" onClick={close} className="px-4 py-2 underline underline-offset-4">Done</button>
           </div>
@@ -180,20 +225,23 @@ const CheckoutModal = ({ isOpen, onClose, cartItems, receipt, onOrderSaved }) =>
             {quote && (
               <>
                 <fieldset disabled={submitting || Boolean(attempt.current)} className="space-y-5">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {!approvedDelivery && <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <CheckoutInput label="Full name" name="customerName" value={details.customerName} onChange={setDetail} autoComplete="name" maxLength={120} />
                     <CheckoutInput label="Contact phone" name="customerPhone" value={details.customerPhone} onChange={setDetail} type="tel" autoComplete="tel" maxLength={24} />
                     {quote.customerEmailRequired && (
                       <CheckoutInput label="Contact email" name="customerEmail" value={details.customerEmail} onChange={setDetail} type="email" autoComplete="email" maxLength={254} />
                     )}
-                  </div>
+                  </div>}
 
                   <fieldset className="space-y-3">
                     <legend className={headingClass}>Fulfilment</legend>
+                    {approvedDelivery ? (
+                      <p className="text-sm text-white break-words">{quote.destination.area} · {quote.destination.address} · Landmark: {quote.destination.landmark}</p>
+                    ) : <>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      {[['pickup', 'Pickup · Free'], ['delivery', `Campus delivery · ${currency(quote.campusDeliveryFee)}`]].map(([value, label]) => (
-                        <label key={value} className={`flex items-center gap-2 p-3 border text-sm cursor-pointer ${details.fulfilmentMethod === value ? 'border-luxury-gold/60 text-white' : 'border-luxury-rosegold/25 text-luxury-champagne'}`}>
-                          <input type="radio" name="fulfilmentMethod" value={value} checked={details.fulfilmentMethod === value} onChange={setDetail} className="accent-luxury-gold" />
+                      {[['pickup', 'Pickup · Free'], ['delivery', 'Delivery']].map(([value, label]) => (
+                        <label key={value} className={`flex items-center gap-2 p-3 border text-sm cursor-pointer ${(value === 'delivery' ? delivery : !delivery) ? 'border-luxury-gold/60 text-white' : 'border-luxury-rosegold/25 text-luxury-champagne'}`}>
+                          <input type="radio" name="fulfilmentMethod" value={value} checked={value === 'delivery' ? delivery : !delivery} onChange={setDetail} className="accent-luxury-gold" />
                           {label}
                         </label>
                       ))}
@@ -201,18 +249,23 @@ const CheckoutModal = ({ isOpen, onClose, cartItems, receipt, onOrderSaved }) =>
                     {delivery ? (
                       <>
                         <label className={labelClass}>
-                          <span>Legon campus destination</span>
-                          <select required name="campusDestination" value={details.campusDestination} onChange={setDetail} className={inputClass}>
-                            <option value="">Select a campus location</option>
+                          <span>Delivery destination</span>
+                          <select required name="campusDestination" value={awaitingDeliveryFee ? 'outside_campus' : details.campusDestination} onChange={selectDestination} className={inputClass}>
+                            <option value="">Select a destination</option>
                             {quote.campusDestinations.map(destination => <option key={destination}>{destination}</option>)}
+                            <option value="outside_campus">Other location / Outside campus</option>
                           </select>
                         </label>
-                        <CheckoutInput label="Room number or entrance at this location" name="addressDetails" value={details.addressDetails} onChange={setDetail} maxLength={180} />
+                        {awaitingDeliveryFee ? <>
+                          <CheckoutInput label="Delivery area" name="area" value={details.area} onChange={setDetail} maxLength={120} />
+                          <CheckoutInput label="Detailed address" name="address" value={details.address} onChange={setDetail} maxLength={300} />
+                          <CheckoutInput label="Nearby landmark" name="landmark" value={details.landmark} onChange={setDetail} maxLength={180} />
+                        </> : <CheckoutInput label="Room number or entrance at this location" name="addressDetails" value={details.addressDetails} onChange={setDetail} maxLength={180} />}
                       </>
                     ) : (
                       <p className="text-sm text-white">{quote.pickupLocation}</p>
                     )}
-                    <p className="text-sm text-luxury-champagne/80">Delivery is limited to the listed University of Ghana, Legon campus locations. Arbitrary meetup locations are unavailable.</p>
+                    </>}
                   </fieldset>
 
                   <div className="space-y-2 border-y border-luxury-rosegold/15 py-3 text-sm">
@@ -223,15 +276,19 @@ const CheckoutModal = ({ isOpen, onClose, cartItems, receipt, onOrderSaved }) =>
                       </div>
                     ))}
                     <div className="flex justify-between gap-3">
-                      <span>{delivery ? 'Campus delivery' : 'Pickup'}</span>
-                      <span>{deliveryFee ? currency(deliveryFee) : 'Free'}</span>
+                      <span>Product subtotal</span><span>{currency(quote.subtotal)}</span>
                     </div>
-                    <div className="flex justify-between gap-3 pt-2 font-serif font-bold text-lg text-luxury-gold">
+                    <div className="flex justify-between gap-3">
+                      <span>{delivery ? 'Delivery fee' : 'Pickup'}</span>
+                      <span>{awaitingDeliveryFee ? 'Delivery fee to be confirmed' : needsDestination ? 'Select a destination' : delivery ? currency(deliveryFee) : 'Free'}</span>
+                    </div>
+                    {showPayment && <div className="flex justify-between gap-3 pt-2 font-serif font-bold text-lg text-luxury-gold">
                       <span>Total to pay</span><span>{currency(total)}</span>
-                    </div>
+                    </div>}
                   </div>
+                  <p className="text-sm text-luxury-champagne/80">Product prices are fixed as displayed. Delivery charges may vary depending on your location and will be confirmed before payment.</p>
 
-                  <div className="space-y-3">
+                  {showPayment && <div className="space-y-3">
                     <h3 className={`flex items-center gap-2 ${headingClass}`}><Wallet size={16} /> Mobile Money</h3>
                     <p className="text-sm text-luxury-champagne">Open your MoMo app and send <strong className="text-white">{currency(total)}</strong> to the account below. Then enter the transaction reference from your MoMo receipt.</p>
                     {quote.momoPaymentInstructions && (
@@ -245,13 +302,15 @@ const CheckoutModal = ({ isOpen, onClose, cartItems, receipt, onOrderSaved }) =>
                       <CheckoutInput label="MoMo phone used to pay" name="momoPhone" value={details.momoPhone} onChange={setDetail} type="tel" maxLength={24} />
                       <CheckoutInput label="Payment reference" name="paymentReference" value={details.paymentReference} onChange={setDetail} maxLength={100} autoComplete="off" />
                     </div>
-                  </div>
+                  </div>}
                 </fieldset>
 
-                <p className="text-sm text-luxury-champagne/80">After saving, press <strong>Send</strong> in WhatsApp. We’ll verify your payment manually.</p>
-                <button type="submit" disabled={submitting} className={actionClass}>
+                {!needsDestination && <p className="text-sm text-luxury-champagne/80">{awaitingDeliveryFee
+                  ? 'The merchant will confirm your delivery fee in WhatsApp before you pay.'
+                  : <>After saving, press <strong>Send</strong> in WhatsApp. We’ll verify your payment manually.</>}</p>}
+                <button type="submit" disabled={submitting || needsDestination} className={actionClass}>
                   <Send size={16} />
-                  {submitting ? 'Saving order…' : attempt.current ? 'Retry saving order' : 'Save order and open WhatsApp'}
+                  {submitting ? 'Saving…' : attempt.current ? 'Retry submission' : awaitingDeliveryFee ? 'Request delivery quote' : 'Save order and open WhatsApp'}
                 </button>
               </>
             )}

@@ -9,9 +9,10 @@ const multer = require('multer');
 const sharp = require('sharp');
 const crypto = require('crypto');
 const createAdminAuth = require('./admin-auth');
+const createDeliveryQuotes = require('./delivery-quotes');
 const { productPayload, publicProduct, productAvailable, normalizeStorefront, fallbackImage, collectionIds } = require('./catalogue');
 const {
-  campus, cleanText, toE164, toGhanaPhone, toPesewas, formatCurrency,
+  campus, campusDeliveryFee, pickupLocation, cleanText, toE164, toGhanaPhone, toPesewas, formatCurrency,
   hash, checkoutError, parseItems, parseOrder, buildQuote, buildWhatsAppMessage
 } = require('./checkout');
 let nodemailer = null;
@@ -114,8 +115,8 @@ const DEFAULT_BRAND_SETTINGS = {
   momoNumber: '',
   momoAccountName: '',
   momoPaymentInstructions: '',
-  pickupLocation: `Jean Nelson Hostel, ${campus}`,
-  campusDeliveryFee: 10
+  pickupLocation,
+  campusDeliveryFee
 };
 
 const isSupabaseConfigured = () => Boolean(SUPABASE_URL && SUPABASE_SERVER_KEY);
@@ -274,7 +275,7 @@ const mapOrderFromDb = (row) => ({
   paymentMethod: row.payment_method,
   paymentStatus: row.admin_payment_verified_at ? 'Paid' : unverifiedPaymentStatus(row),
   paymentVerifiedAt: row.admin_payment_verified_at,
-  fulfilmentMethod: row.fulfilment_method,
+  fulfilmentMethod: row.delivery_quote_id ? 'outside_campus' : row.fulfilment_method,
   pickupLocation: row.pickup_location,
   deliveryFee: row.delivery_fee == null ? null : Number(row.delivery_fee),
   momoPhone: row.momo_phone,
@@ -300,13 +301,14 @@ const mapOrderToDb = (order) => ({
   total_amount: order.totalAmount,
   order_status: 'Pending',
   payment_method: order.paymentMethod,
-  fulfilment_method: order.fulfilmentMethod,
+  fulfilment_method: order.deliveryQuoteId ? 'delivery' : order.fulfilmentMethod,
   ...(order.pickupLocation ? { pickup_location: order.pickupLocation } : {}),
   delivery_fee: order.deliveryFee,
   momo_phone: order.momoPhone,
   payment_reference: order.paymentReference,
   checkout_request_id: order.requestId,
   checkout_request_hash: order.requestHash,
+  ...(order.deliveryQuoteId ? { delivery_quote_id: order.deliveryQuoteId } : {}),
   whatsapp_number: order.whatsappNumber,
   created_at: order.createdAt,
   updated_at: order.updatedAt
@@ -324,8 +326,8 @@ const mapSettingsFromDb = (row) => Object.fromEntries(
     momoNumber: row.momo_number,
     momoAccountName: row.momo_account_name,
     momoPaymentInstructions: row.momo_payment_instructions,
-    pickupLocation: row.pickup_location,
-    campusDeliveryFee: optionalNumeric(row.campus_delivery_fee ?? row.delivery_fee),
+    pickupLocation,
+    campusDeliveryFee,
     storefront: row.storefront,
     settingsRevision: row.settings_revision
   }).filter(([, value]) => value !== undefined && value !== null && value !== '')
@@ -550,7 +552,8 @@ const getBrandSettings = async ({ strict = false } = {}) => {
   }
 
   const parsed = readJsonFile(SETTINGS_FILE, DEFAULT_BRAND_SETTINGS);
-  return { ...DEFAULT_BRAND_SETTINGS, ...(parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}) };
+  return { ...DEFAULT_BRAND_SETTINGS, ...(parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}),
+    pickupLocation, campusDeliveryFee };
 };
 
 const saveBrandSettings = async (settings, revision) => {
@@ -608,18 +611,6 @@ const normalizeBrandPayload = (body, storefront) => {
       throw checkoutError(400, 'Use up to 500 characters of text for MoMo payment instructions.');
     }
     updates.momoPaymentInstructions = instructions.trim();
-  }
-  if (body.pickupLocation !== undefined) {
-    const location = cleanText(body.pickupLocation);
-    if (!location || location.length > 180) throw checkoutError(400, 'Enter a pickup location of up to 180 characters.');
-    updates.pickupLocation = location;
-  }
-  if (body.campusDeliveryFee !== undefined) {
-    const fee = String(body.campusDeliveryFee);
-    if (!/^\d{1,7}(\.\d{1,2})?$/.test(fee)) {
-      throw checkoutError(400, 'Enter a campus delivery fee of zero or more, with up to two decimal places.');
-    }
-    updates.campusDeliveryFee = Number(fee);
   }
 
   if (body.storefront !== undefined) updates.storefront = normalizeStorefront(body.storefront, storefront);
@@ -1083,9 +1074,13 @@ const requireCheckoutStorage = () => {
   }
 };
 
-const quoteCart = async (items) => {
+const requireCheckout = () => {
   requireCheckoutStorage();
   if (!checkoutEnabled) throw checkoutError(503, 'Checkout is temporarily paused. Please try again later.');
+};
+
+const quoteCart = async (items, options) => {
+  requireCheckout();
   const productIds = [...new Set(items.map(item => item.productId))].join(',');
   const [settings, rows, customerEmailRequired] = await Promise.all([
     readSupabaseBrandSettings(),
@@ -1093,17 +1088,38 @@ const quoteCart = async (items) => {
     supabaseRequest('rpc/omans_checkout_requires_email')
   ]);
   if (typeof customerEmailRequired !== 'boolean') throw new Error('Checkout email requirement is unavailable');
-  return buildQuote(items, rows.map(mapProductFromDb), { ...settings, customerEmailRequired });
+  return buildQuote(items, rows.map(mapProductFromDb), { ...settings, customerEmailRequired }, options);
 };
 
 app.post('/api/checkout/quote', route(async (req, res) => {
   res.set('Cache-Control', 'no-store');
-  res.json(await quoteCart(parseItems(req.body?.items)));
+  res.json(await quoteCart(parseItems(req.body?.items), { payment: req.body?.fulfilmentMethod !== 'outside_campus' }));
+}));
+
+const deliveryQuotes = createDeliveryQuotes({ secret: JWT_SECRET, origin: CLIENT_ORIGIN, supabaseRequest, quoteCart, requireCheckout });
+
+app.post('/api/checkout/delivery-quotes', route(async (req, res) => {
+  res.status(201).json(await deliveryQuotes.requestQuote(req.body || {}));
+}));
+
+app.get('/api/admin/delivery-quotes', authenticateAdmin, route(async (req, res) => {
+  requireCheckoutStorage();
+  res.json(await deliveryQuotes.listQuotes(req.query.reviewed === 'true', req.query.page ?? 0));
+}));
+
+app.patch('/api/admin/delivery-quotes/:id/approval', authenticateAdmin, route(async (req, res) => {
+  requireCheckout();
+  res.json(await deliveryQuotes.approveQuote(req.params.id, req.body?.deliveryFee));
 }));
 
 const findCheckout = async (requestId) => {
   const rows = await supabaseRequest(`orders?${ORDER_PROJECTION}&checkout_request_id=eq.${requestId}&limit=1`);
   return rows[0];
+};
+
+const findQuotedOrder = async (quoteId) => {
+  const [row] = await supabaseRequest(`orders?${ORDER_PROJECTION}&delivery_quote_id=eq.${quoteId}&limit=1`);
+  return row;
 };
 
 const checkoutReceipt = (row, requestHash) => {
@@ -1118,15 +1134,30 @@ const checkoutReceipt = (row, requestHash) => {
   };
 };
 
+app.post('/api/checkout/delivery-quotes/resume', route(async (req, res) => {
+  requireCheckoutStorage();
+  const approved = await deliveryQuotes.fromToken(req.body?.deliveryQuoteToken);
+  const saved = await findQuotedOrder(approved.id);
+  res.json(saved ? { receipt: checkoutReceipt(saved, saved.checkout_request_hash) } : {
+    quote: await deliveryQuotes.payableQuote(approved)
+  });
+}));
+
 app.post('/api/orders', route(async (req, res) => {
   res.set('Cache-Control', 'no-store');
   requireCheckoutStorage();
-  const submission = parseOrder(req.body || {});
-  const requestHash = hash(submission);
-  const existing = await findCheckout(submission.requestId);
+  const body = req.body || {};
+  const approved = body.deliveryQuoteToken === undefined ? null : await deliveryQuotes.fromToken(body.deliveryQuoteToken);
+  const submission = parseOrder(approved ? {
+    ...body, fulfilmentMethod: 'outside_campus', items: approved.items,
+    customerName: approved.customer_name, customerPhone: approved.customer_phone, customerEmail: approved.customer_email
+  } : body, Boolean(approved));
+  const requestHash = hash(approved ? { ...submission, requestId: undefined, deliveryQuoteId: approved.id } : submission);
+  const findSaved = async () => (approved ? await findQuotedOrder(approved.id) : null) || await findCheckout(submission.requestId);
+  const existing = await findSaved();
   if (existing) return res.json(checkoutReceipt(existing, requestHash));
 
-  const quote = await quoteCart(submission.items);
+  const quote = approved ? await deliveryQuotes.payableQuote(approved) : await quoteCart(submission.items);
   if (quote.quoteKey !== submission.quoteKey) {
     throw checkoutError(409, 'Checkout details changed. Review the updated total and payment instructions before submitting.');
   }
@@ -1135,8 +1166,12 @@ app.post('/api/orders', route(async (req, res) => {
     throw checkoutError(400, 'Enter a valid contact email for your order.');
   }
 
-  const delivery = submission.fulfilmentMethod === 'delivery';
-  const deliveryFee = delivery ? quote.campusDeliveryFee : 0;
+  const campusDelivery = submission.fulfilmentMethod === 'delivery';
+  const delivery = campusDelivery || Boolean(approved);
+  const deliveryFee = approved ? quote.deliveryFee : campusDelivery ? quote.campusDeliveryFee : 0;
+  const deliveryAddress = approved
+    ? `${approved.area} · ${approved.address} · Landmark: ${approved.landmark}`
+    : campusDelivery ? `${submission.campusDestination}, ${campus} · ${submission.addressDetails}` : '';
   const now = new Date().toISOString();
   const order = {
     customerName: submission.customerName,
@@ -1145,10 +1180,11 @@ app.post('/api/orders', route(async (req, res) => {
     fulfilmentMethod: submission.fulfilmentMethod,
     pickupLocation: delivery ? null : quote.pickupLocation,
     deliveryPhone: delivery ? submission.customerPhone : '',
-    deliveryAddress: delivery ? `${submission.campusDestination}, ${campus} · ${submission.addressDetails}` : '',
-    cityRegion: delivery ? 'Legon' : '',
+    deliveryAddress,
+    cityRegion: approved?.area || (campusDelivery ? 'Legon' : ''),
     deliveryFee,
-    items: quote.items,
+    deliveryQuoteId: approved?.id,
+    items: approved?.items || quote.items,
     totalAmount: (toPesewas(quote.subtotal) + toPesewas(deliveryFee)) / 100,
     momoPhone: submission.momoPhone,
     paymentReference: submission.paymentReference,
@@ -1168,15 +1204,16 @@ app.post('/api/orders', route(async (req, res) => {
       body: JSON.stringify(mapOrderToDb(order))
     });
   } catch (error) {
-    if (error.details?.code !== '23505' || !error.message.includes('omans_orders_momo_reference_key')) throw error;
+    if (error.details?.code !== '23505' ||
+        !/omans_orders_momo_reference_key|omans_orders_delivery_quote_key/.test(error.message)) throw error;
 
-    const saved = await findCheckout(submission.requestId);
+    const saved = await findSaved();
     if (saved) return res.json(checkoutReceipt(saved, requestHash));
     throw checkoutError(409, 'An order already used this Mobile Money reference. Use your saved WhatsApp receipt or contact support before paying again.');
   }
 
   if (!inserted) {
-    const saved = await findCheckout(submission.requestId);
+    const saved = await findSaved();
     if (!saved) throw new Error('Order receipt unavailable after insert');
     return res.json(checkoutReceipt(saved, requestHash));
   }
@@ -1310,6 +1347,9 @@ app.use((err, req, res, next) => {
   if (err.checkoutStatus) return res.status(err.checkoutStatus).json({ error: err.message });
   if (err.message === 'omans_checkout_catalogue_changed') {
     return res.status(409).json({ error: 'An item changed or sold out before the order could be saved. Review your cart.' });
+  }
+  if (err.message === 'omans_delivery_quote_invalid') {
+    return res.status(409).json({ error: 'The delivery quote is no longer valid. Contact the merchant before paying again.' });
   }
   if (err.type === 'entity.parse.failed') return res.status(400).json({ error: 'Invalid JSON request.' });
   if (err.type === 'entity.too.large') return res.status(413).json({ error: 'Request is too large.' });

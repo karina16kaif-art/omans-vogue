@@ -1,11 +1,15 @@
 const crypto = require('crypto');
 
 const campus = 'University of Ghana, Legon';
+const pickupLocation = 'Jean Nelson Hostel, University of Ghana, Legon';
+const campusDeliveryFee = 10;
 const campusDestinations = [
-  'Akuafo Hall', 'Alexander Adum Kwapong Hall', 'Balme Library', 'Commonwealth Hall',
+  'Akuafo Hall', 'Alexander Adum Kwapong Hall', 'Balme Library', 'Bani Hostel', 'Commonwealth Hall',
+  'Diamond Jubilee Hall',
   'Elizabeth Frances Baaba Sey Hall', 'Hilla Limann Hall', 'International Students Hostel',
-  'Jean Nelson Hostel', 'Jubilee Hall', 'Legon Hall', 'Mensah Sarbah Hall',
-  'United Nations Hall', 'VALCO Trust Hostel', 'Volta Hall'
+  'Jean Nelson Hostel', 'Jubilee Hall', 'Legon Hall', 'Legon Hall Annex C', 'Mensah Sarbah Hall',
+  'Mensah Sarbah Hall Annex C/D', 'Pentagon (Pent)', 'TF Hostel', 'United Nations Hall',
+  'VALCO Trust Hostel', 'Vikings Hostel', 'Volta Hall'
 ];
 
 const cleanText = (value) => typeof value === 'string' ? value.trim().replace(/\s+/g, ' ') : '';
@@ -29,6 +33,9 @@ const toPesewas = (value) => {
 };
 const formatCurrency = (value) => `GH₵${Number(value || 0).toFixed(2)}`;
 const hash = (value) => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
+const cartPriceKey = (items) => hash(items.map(({ productId, variantId, quantity, unitPrice }) =>
+  [String(productId), variantId ?? null, quantity, toPesewas(unitPrice)]
+));
 
 const checkoutError = (status, message) => Object.assign(new Error(message), { checkoutStatus: status });
 
@@ -54,7 +61,7 @@ function parseItems(items) {
   );
 }
 
-function parseOrder(body) {
+function parseOrder(body, approvedDelivery = false) {
   const requestId = cleanText(body.requestId).toLowerCase();
   const quoteKey = cleanText(body.quoteKey);
   const customerName = cleanText(body.customerName);
@@ -77,7 +84,7 @@ function parseOrder(body) {
   if (customerEmail && (customerEmail.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(customerEmail))) {
     throw checkoutError(400, 'Enter a valid contact email for your order.');
   }
-  if (!['pickup', 'delivery'].includes(method)) {
+  if (!['pickup', 'delivery'].includes(method) && !(approvedDelivery && method === 'outside_campus')) {
     throw checkoutError(400, 'Choose pickup or campus delivery.');
   }
   if (method === 'delivery' && (!campusDestinations.includes(campusDestination) || !addressDetails || addressDetails.length > 180)) {
@@ -99,13 +106,12 @@ function parseOrder(body) {
   };
 }
 
-function buildQuote(quantities, products, settings) {
+function buildQuote(quantities, products, settings, { payment = true } = {}) {
   const {
-    momoNumber, momoAccountName, momoPaymentInstructions, whatsappNumber, pickupLocation, campusDeliveryFee, customerEmailRequired
+    momoNumber, momoAccountName, momoPaymentInstructions, whatsappNumber, customerEmailRequired
   } = settings;
   const deliveryFee = toPesewas(campusDeliveryFee);
-  if (!toGhanaPhone(momoNumber) || !cleanText(momoAccountName) || !toE164(whatsappNumber) ||
-      !cleanText(pickupLocation) || !Number.isSafeInteger(deliveryFee) || deliveryFee < 0) {
+  if (!toE164(whatsappNumber) || (payment && (!toGhanaPhone(momoNumber) || !cleanText(momoAccountName)))) {
     throw checkoutError(503, 'Mobile Money checkout is temporarily unavailable. Please try again later.');
   }
 
@@ -134,14 +140,14 @@ function buildQuote(quantities, products, settings) {
   const quote = {
     items,
     subtotal: subtotal / 100,
-    momoNumber: toGhanaPhone(momoNumber),
-    momoAccountName: cleanText(momoAccountName),
+    ...(payment ? { momoNumber: toGhanaPhone(momoNumber), momoAccountName: cleanText(momoAccountName) } : {}),
     whatsappNumber: toE164(whatsappNumber),
     pickupLocation: cleanText(pickupLocation),
     campusDeliveryFee: deliveryFee / 100,
     customerEmailRequired
   };
-  return { ...quote, momoPaymentInstructions: momoPaymentInstructions || '', campusDestinations, quoteKey: hash(quote) };
+  return { ...quote, ...(payment ? { momoPaymentInstructions: momoPaymentInstructions || '' } : {}),
+    campusDestinations, quoteKey: hash(quote), priceKey: cartPriceKey(items) };
 }
 
 function buildWhatsAppMessage(order) {
@@ -153,8 +159,8 @@ function buildWhatsAppMessage(order) {
     '*Products*',
     ...order.items.map(item => `• ${item.quantity} × ${item.name}${item.variantLabel ? ` (${item.variantLabel})` : ''} @ ${formatCurrency(item.unitPrice)} = ${formatCurrency(item.unitPrice * item.quantity)}`),
     '',
-    `Fulfilment: ${order.fulfilmentMethod === 'delivery' ? 'Campus delivery' : 'Pickup'}`,
-    order.fulfilmentMethod === 'delivery'
+    `Fulfilment: ${({ delivery: 'Campus delivery', outside_campus: 'Outside-campus delivery', pickup: 'Pickup' })[order.fulfilmentMethod]}`,
+    order.fulfilmentMethod !== 'pickup'
       ? `Delivery address: ${order.deliveryAddress}`
       : `Pickup location: ${order.pickupLocation}`,
     `Delivery fee: ${formatCurrency(order.deliveryFee)}`,
@@ -166,6 +172,6 @@ function buildWhatsAppMessage(order) {
 }
 
 module.exports = {
-  campus, cleanText, toE164, toGhanaPhone, toPesewas, formatCurrency,
-  hash, checkoutError, parseItems, parseOrder, buildQuote, buildWhatsAppMessage
+  campus, campusDeliveryFee, pickupLocation, cleanText, toE164, toGhanaPhone, toPesewas, formatCurrency,
+  hash, cartPriceKey, checkoutError, parseItems, parseOrder, buildQuote, buildWhatsAppMessage
 };

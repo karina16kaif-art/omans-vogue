@@ -107,3 +107,23 @@ fields with safe defaults. Frontend build and local admin and checkout tests are
   and reconcile all changes after the chosen recovery point before restoring.
 
 [Render rollback](https://render.com/docs/rollbacks) · [Netlify rollback](https://docs.netlify.com/deploy/manage-deploys/manage-deploys-overview/) · [Supabase backup and restore](https://supabase.com/docs/guides/platform/backups)
+
+## Outside-campus delivery follow-up
+
+1. After approval, apply the single additive
+   [delivery quote migration](supabase/migrations/202611190003_outside_campus_delivery.sql)
+   to the existing Supabase project. It adds private quotes and an optional link from a
+   completed order. Existing products, settings and orders need no data updates.
+2. Deploy the matched backend to the existing Render service, then publish the matched
+   frontend on the existing Netlify site. The secure links use the existing
+   `CLIENT_ORIGIN` and `JWT_SECRET`. The existing checkout flag continues to apply.
+3. Verify free pickup and a GH₵10 listed campus destination, then use a controlled
+   outside-campus request with approval. In **Orders → Outside-campus delivery quotes**,
+   confirm the rider fee and open WhatsApp to send the link. The link expires after
+   24 hours. Check the product subtotal and delivery fee separately, confirm that the
+   request did not create an order or reserve stock, and verify a controlled order only
+   after the merchant confirms receipt of the actual MoMo payment.
+
+Keep the additive migration in place if an application rollback is needed. The previous
+release can still serve regular checkout. Restore the delivery-enabled release before
+using previously issued outside-campus links.

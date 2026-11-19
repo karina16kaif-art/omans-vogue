@@ -145,7 +145,7 @@ const CartDrawer = ({ isOpen, onClose, cartItems, currentProducts, onUpdateQuant
                   <span>Cart subtotal</span>
                   <span className="font-serif text-lg font-black text-luxury-gold">{canCheckout ? `GH₵${subtotal.toFixed(2)}` : '—'}</span>
                 </div>
-                <p className="text-sm text-luxury-champagne/75">Pickup and campus delivery are selected at checkout.</p>
+                <p className="text-sm text-luxury-champagne/75">Choose pickup, campus delivery or an outside-campus quote at checkout.</p>
               </div>
 
               {!canCheckout && <p className="text-sm">{currentProducts ? 'Remove unavailable items before checkout.' : 'Current prices and availability are temporarily unavailable.'}</p>}

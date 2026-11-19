@@ -82,7 +82,7 @@ export const FulfilmentInfo = ({ brandSettings }) => {
         </div>
         <div className="glass-panel p-5 border border-luxury-rosegold/15">
           <h3 className="text-luxury-gold font-semibold flex items-center gap-2"><Truck size={17} /> Campus delivery · {currency(brandSettings.campusDeliveryFee)}</h3>
-          <p className="mt-2 text-luxury-champagne">Delivery is available at the listed University of Ghana, Legon campus destinations. Arbitrary meetup locations are unavailable.</p>
+          <p className="mt-2 text-luxury-champagne">Choose a listed University of Ghana, Legon destination or request an outside-campus delivery quote before paying.</p>
         </div>
       </div>
     </Section>
