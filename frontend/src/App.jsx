@@ -249,6 +249,7 @@ const App = () => {
 
   const handleOrderSaved = useCallback((receipt, items) => {
     setCheckoutReceipt(receipt);
+    if (!receipt.orderId) return;
     const purchased = new Map(items.map(item => [lineKey(item.productId, item.variantId), item.quantity]));
     updateCart(previous => previous
       .map(item => ({ ...item, quantity: item.quantity - (purchased.get(cartKey(item)) || 0) }))

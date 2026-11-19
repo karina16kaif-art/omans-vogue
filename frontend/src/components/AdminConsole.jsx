@@ -3,9 +3,12 @@ import { BarChart3, Banknote, CalendarDays, CheckCircle, Filter, LogOut, Package
 import { api } from '../lib/api';
 import AdminProducts from './AdminProducts';
 import BrandSettings from './BrandSettings';
-import DeliveryQuotes from './DeliveryQuotes';
+import RiderFeeApproval from './DeliveryQuotes';
 
-const ORDER_STATUSES = ['Pending', 'Processing', 'Delivered', 'Cancelled'];
+const ORDER_STATUSES = [
+  'Pending Merchant Review', 'Awaiting Delivery Fee', 'Awaiting Payment', 'Payment Verification',
+  'Confirmed', 'Processing', 'Ready for Pickup', 'Out for Delivery', 'Delivered', 'Cancelled'
+];
 const PAYMENT_STATUSES = ['All', 'Pending', 'Paid', 'Failed', 'Cancelled'];
 const EMPTY_ANALYTICS = {
   totalOrders: 0,
@@ -15,6 +18,7 @@ const EMPTY_ANALYTICS = {
   revenueToday: 0,
   revenueThisMonth: 0,
   pendingOrders: 0,
+  pendingRequests: 0,
   pendingPayments: 0,
   paidOrders: 0,
   deliveredOrders: 0,
@@ -59,6 +63,7 @@ const AdminConsole = (props) => {
     if (filters.paymentStatus !== 'All') params.set('paymentStatus', filters.paymentStatus);
     if (filters.orderStatus !== 'All') params.set('orderStatus', filters.orderStatus);
     params.set('includeAnalytics', 'true');
+    params.set('includePurchases', 'true');
 
     const options = { headers: authHeaders, signal: request.signal };
     try {
@@ -87,7 +92,8 @@ const AdminConsole = (props) => {
     setSavingOrders(previous => ({ ...previous, [orderId]: true }));
     setOrdersError('');
     try {
-      await api.patch(`/api/orders/${encodeURIComponent(orderId)}/${route}`, payload, { headers: authHeaders });
+      const collection = orders.find(order => order.id === orderId)?.isPurchaseRequest ? '/api/admin/delivery-quotes' : '/api/orders';
+      await api.patch(`${collection}/${encodeURIComponent(orderId)}/${route}`, payload, { headers: authHeaders });
       await fetchOrders();
     } catch (error) {
       setOrdersError(error.response?.data?.error || 'The order update failed. Try again.');
@@ -97,7 +103,7 @@ const AdminConsole = (props) => {
   };
 
   const verifyPayment = (order) => {
-    if (window.confirm(`Have you confirmed receipt of ${currency(order.totalAmount)} for order ${order.id}?`)) {
+    if (window.confirm(`Have you confirmed receipt of ${currency(order.totalAmount)} for order ${order.orderNumber || order.id}?`)) {
       updateOrder(order.id, 'payment', { paymentStatus: 'Paid' });
     }
   };
@@ -122,6 +128,7 @@ const AdminConsole = (props) => {
     ['Revenue Today', currency(analytics?.revenueToday), Banknote],
     ['Revenue This Month', currency(analytics?.revenueThisMonth), Banknote],
     ['Pending Orders', analytics?.pendingOrders || 0, Filter],
+    ['Pending Purchase Requests', analytics?.pendingRequests || 0, ShoppingBag],
     ['Pending Payments', analytics?.pendingPayments || 0, Banknote],
     ['Confirmed Paid Orders', analytics?.paidOrders || 0, CheckCircle],
     ['Delivered Orders', analytics?.deliveredOrders || 0, Truck],
@@ -228,7 +235,7 @@ const AdminConsole = (props) => {
 
             <div className="p-6 glass-panel space-y-6">
               <div>
-                <h3 className="text-[10px] uppercase tracking-widest text-luxury-rosegold font-bold mb-4">Orders by Status</h3>
+                <h3 className="text-[10px] uppercase tracking-widest text-luxury-rosegold font-bold mb-4">Orders and Requests by Status</h3>
                 <div className="space-y-3">
                   {statusEntries.map(([status, count]) => (
                     <div key={status}>
@@ -264,7 +271,6 @@ const AdminConsole = (props) => {
             </div>
           </div>
 
-          <DeliveryQuotes headers={authHeaders} />
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <div className="p-6 glass-panel">
               <h3 className="text-[10px] uppercase tracking-widest text-luxury-rosegold font-bold mb-5">Orders</h3>
@@ -379,13 +385,16 @@ const AdminConsole = (props) => {
                   </div>
                 ) : orders.map((order) => {
                   const paymentVerified = order.paymentStatus === 'Paid' && order.paymentVerifiedAt;
-                  const status = { New: 'Pending', 'Out for Delivery': 'Processing' }[order.orderStatus] || order.orderStatus;
+                  const status = order.orderStatus;
+                  const allowed = order.allowedStatuses || [status];
+                  const feesPending = order.deliveryFee == null && order.isPurchaseRequest;
                   return (
                     <div key={order.id} className="border border-luxury-rosegold/10 bg-luxury-black/40 p-5">
                       <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-5">
                         <div className="space-y-2">
                           <div className="flex flex-wrap items-center gap-3">
-                            <span className="font-serif text-white text-base tracking-widest font-black">{order.id}</span>
+                            <span className="font-serif text-white text-base tracking-widest font-black">{order.orderNumber || order.id}</span>
+                            {order.isPurchaseRequest && <span className="text-xs text-luxury-gold">Purchase request</span>}
                             <span className="px-2 py-1 border border-luxury-rosegold/20 text-[9px] uppercase tracking-widest text-luxury-rosegold">
                               {paymentVerified ? 'Payment verified' : order.paymentStatus === 'Paid' ? 'Payment needs review' : `Payment ${(order.paymentStatus || 'Pending').toLowerCase()}`}
                             </span>
@@ -394,38 +403,38 @@ const AdminConsole = (props) => {
                             </span>
                           </div>
                           <p className="text-sm text-luxury-champagne">{order.customerName} · {order.customerPhone}</p>
+                          {order.customerEmail && <p className="text-xs text-luxury-champagne break-all">{order.customerEmail}</p>}
                           {order.deliveryPhone && order.deliveryPhone !== order.customerPhone && (
                             <p className="text-sm text-luxury-champagne">Delivery phone {order.deliveryPhone}</p>
                           )}
                           <p className="text-sm text-luxury-champagne/75 break-words">
                             {order.fulfilmentMethod === 'pickup'
                               ? `Pickup at ${order.pickupLocation}`
-                              : [order.deliveryAddress, !order.fulfilmentMethod && order.cityRegion].filter(Boolean).join(', ')}
+                              : [order.area, order.address || order.deliveryAddress, order.landmark && `Landmark: ${order.landmark}`].filter(Boolean).join(' · ')}
                           </p>
-                          {['delivery', 'outside_campus'].includes(order.fulfilmentMethod) && (
-                            <p className="text-sm text-luxury-champagne/75">{order.fulfilmentMethod === 'delivery' ? 'Campus delivery fee' : 'Confirmed rider fee'} {currency(order.deliveryFee)}</p>
-                          )}
+                          <p className="text-sm text-luxury-champagne/75">Product subtotal {currency(order.subtotal)}</p>
+                          <p className="text-sm text-luxury-champagne/75">Delivery fee {feesPending ? 'Awaiting Merchant Approval' : currency(order.deliveryFee)}</p>
                           {order.momoPhone && <p className="text-sm text-luxury-champagne">MoMo phone {order.momoPhone}</p>}
                           {order.paymentReference && <p className="text-sm text-luxury-champagne break-all">Reference {order.paymentReference}</p>}
                           <p className="text-xs text-luxury-champagne/60">
-                            {new Date(order.createdAt).toLocaleString('en-GH', { timeZone: 'Africa/Accra' })} · {order.paymentMethod}
+                            {new Date(order.requestedAt || order.createdAt).toLocaleString('en-GH', { timeZone: 'Africa/Accra' })} · {order.paymentMethod}
                           </p>
                         </div>
 
                         <div className="flex flex-col gap-3 shrink-0">
-                          <span className="font-serif text-luxury-gold font-black text-lg">{currency(order.totalAmount)}</span>
+                          {order.totalAmount != null && <span className="font-serif text-luxury-gold font-black text-lg">Total {currency(order.totalAmount)}</span>}
                           <label className="flex flex-col gap-1 text-sm text-luxury-champagne">
                             Order status
                             <select
                               value={status}
                               onChange={(event) => updateOrder(order.id, 'status', { orderStatus: event.target.value })}
-                              disabled={savingOrders[order.id]}
+                              disabled={savingOrders[order.id] || allowed.length === 1}
                               className="px-3 py-2 bg-luxury-black border border-luxury-rosegold/25 text-white text-sm focus:border-luxury-rosegold focus:outline-none rounded-none"
                             >
-                              {ORDER_STATUSES.map(option => <option key={option} value={option}>{option}</option>)}
+                              {ORDER_STATUSES.map(option => <option key={option} value={option} disabled={!allowed.includes(option)}>{option}</option>)}
                             </select>
                           </label>
-                          {!paymentVerified && (
+                          {order.canVerifyPayment && (
                             <button
                               type="button"
                               onClick={() => verifyPayment(order)}
@@ -434,6 +443,16 @@ const AdminConsole = (props) => {
                             >
                               Verify payment
                             </button>
+                          )}
+                          {feesPending && status !== 'Cancelled' && (
+                            <RiderFeeApproval order={order} busy={savingOrders[order.id]}
+                              onConfirm={deliveryFee => updateOrder(order.id, 'approval', { deliveryFee })} />
+                          )}
+                          {order.customerWhatsappUrl && (
+                            <a href={order.customerWhatsappUrl} target="_blank" rel="noopener noreferrer"
+                              className="px-3 py-2 border border-luxury-gold/45 text-center text-sm text-luxury-gold">
+                              {order.checkoutUrl ? 'Open WhatsApp to share checkout link' : 'Contact customer via WhatsApp'}
+                            </a>
                           )}
                         </div>
                       </div>
@@ -447,11 +466,21 @@ const AdminConsole = (props) => {
                             </div>
                             <div className="text-right">
                               <span className="block text-xs text-luxury-champagne">x{item.quantity}</span>
-                              <span className="block text-[10px] text-luxury-gold">{currency(item.unitPrice)}</span>
+                              <span className="block text-[10px] text-luxury-gold">{currency(item.unitPrice ?? item.price)}</span>
                             </div>
                           </div>
                         ))}
                       </div>
+                      <details className="mt-4 text-sm text-luxury-champagne/80">
+                        <summary className="cursor-pointer text-luxury-gold">Order history</summary>
+                        {order.history?.length ? <ul className="mt-2 space-y-1">
+                          {order.history.map((event, index) => <li key={index}>
+                            {new Date(event.at).toLocaleString('en-GH', { timeZone: 'Africa/Accra' })} · {event.actor === 'merchant' ? 'Merchant' : 'Customer'} ·
+                            {event.kind === 'delivery fee' ? ` Rider fee approved at ${currency(event.to)}`
+                              : ` ${event.from ? `${event.from} → ` : ''}${event.to}`}
+                          </li>)}
+                        </ul> : <p className="mt-2">No recorded status changes.</p>}
+                      </details>
                     </div>
                   );
                 })}

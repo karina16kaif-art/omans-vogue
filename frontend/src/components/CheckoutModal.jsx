@@ -31,7 +31,7 @@ const CheckoutModal = ({ isOpen, onClose, cartItems, receipt, onOrderSaved, deli
   const [submitting, setSubmitting] = useState(false);
   const [checkoutError, setCheckoutError] = useState('');
   const [paymentSupport, setPaymentSupport] = useState('');
-  const [deliveryRequest, setDeliveryRequest] = useState(null);
+  const deliveryRequest = receipt?.requestId && !receipt.orderId ? receipt : null;
   const attempt = useRef(null);
   const approvedDelivery = deliveryQuoteToken !== undefined;
   const awaitingDeliveryFee = !approvedDelivery && details.fulfilmentMethod === 'outside_campus';
@@ -44,7 +44,7 @@ const CheckoutModal = ({ isOpen, onClose, cartItems, receipt, onOrderSaved, deli
   })), [cartItems]);
 
   useEffect(() => {
-    if (!isOpen || receipt || deliveryRequest || attempt.current || (!approvedDelivery && !items.length)) return;
+    if (!isOpen || receipt || attempt.current || (!approvedDelivery && !items.length)) return;
 
     const controller = new AbortController();
     setQuote(null);
@@ -62,22 +62,16 @@ const CheckoutModal = ({ isOpen, onClose, cartItems, receipt, onOrderSaved, deli
         }
       });
     return () => controller.abort();
-  }, [approvedDelivery, deliveryQuoteToken, deliveryRequest, isOpen, items, onOrderSaved, quoteRevision, receipt]);
+  }, [approvedDelivery, deliveryQuoteToken, isOpen, items, onOrderSaved, quoteRevision, receipt]);
 
   const close = () => {
-    if (!submitting) {
-      setDeliveryRequest(null);
-      onClose();
-    }
+    if (!submitting) onClose();
   };
 
   useEffect(() => {
     if (!isOpen) return;
     const handleKey = (event) => {
-      if (event.key === 'Escape' && !submitting) {
-        setDeliveryRequest(null);
-        onClose();
-      }
+      if (event.key === 'Escape' && !submitting) onClose();
     };
     document.addEventListener('keydown', handleKey);
     return () => document.removeEventListener('keydown', handleKey);
@@ -98,10 +92,6 @@ const CheckoutModal = ({ isOpen, onClose, cartItems, receipt, onOrderSaved, deli
   const submitOrder = async (event) => {
     event.preventDefault();
     if (!quote || submitting || needsDestination) return;
-
-    // Reserve a tab during the click so popup blockers do not depend on API timing.
-    const whatsappTab = window.open('', '_blank');
-    if (whatsappTab) whatsappTab.opener = null;
 
     const fields = approvedDelivery
       ? { deliveryQuoteToken, momoPhone: details.momoPhone, paymentReference: details.paymentReference }
@@ -124,7 +114,6 @@ const CheckoutModal = ({ isOpen, onClose, cartItems, receipt, onOrderSaved, deli
       }
       savedOrder = data;
     } catch (error) {
-      whatsappTab?.close();
       const status = error.response?.status;
       if (status >= 400 && status < 500) {
         attempt.current = null;
@@ -143,13 +132,7 @@ const CheckoutModal = ({ isOpen, onClose, cartItems, receipt, onOrderSaved, deli
     if (savedOrder) {
       attempt.current = null;
       setDetails(initialDetails);
-      if (awaitingDeliveryFee) setDeliveryRequest(savedOrder);
-      else onOrderSaved(savedOrder, payload.items);
-      try {
-        if (whatsappTab && !whatsappTab.closed) whatsappTab.location.replace(savedOrder.whatsappUrl);
-      } catch {
-        whatsappTab?.close();
-      }
+      onOrderSaved(savedOrder, awaitingDeliveryFee ? [] : payload.items);
     }
   };
 
@@ -179,27 +162,35 @@ const CheckoutModal = ({ isOpen, onClose, cartItems, receipt, onOrderSaved, deli
         </button>
         <header className="text-center px-8 pb-4 mb-5 border-b border-luxury-rosegold/15">
           <h2 id="checkout-title" className="font-serif text-xl tracking-widest text-white uppercase font-black">
-            {receipt ? 'Order saved' : deliveryRequest ? 'Delivery quote requested' : 'Checkout'}
+            {deliveryRequest ? 'Purchase request saved' : receipt ? 'Order saved' : 'Checkout'}
           </h2>
         </header>
 
-        {receipt ? (
+        {receipt && !deliveryRequest ? (
           <div className="space-y-4 text-center text-luxury-champagne">
             <CheckCircle2 className="mx-auto text-luxury-gold" size={32} aria-hidden="true" />
-            <p className="font-semibold break-all">{receipt.orderId}</p>
-            <p>Open the prefilled WhatsApp message and press <strong>Send</strong> to share your order with us. Your payment is pending manual verification.</p>
-            <a href={receipt.whatsappUrl} target="_blank" rel="noopener noreferrer" className={actionClass}>
-              <Send size={16} /> Open WhatsApp again
-            </a>
+            <p className="font-semibold break-all">{receipt.orderNumber || receipt.orderId}</p>
+            <p>{receipt.orderStatus || 'Payment Verification'} · {receipt.paymentStatus === 'Paid' ? 'Payment verified' : 'Payment pending'}</p>
+            <p>Your order is saved in Eugenia’s dashboard.</p>
+            {receipt.whatsappUrl && <>
+              <p>To notify Eugenia, open WhatsApp and press <strong>Send</strong>.</p>
+              <a href={receipt.whatsappUrl} target="_blank" rel="noopener noreferrer" className={actionClass}>
+                <Send size={16} /> Open WhatsApp notification
+              </a>
+            </>}
             <button type="button" onClick={close} className="px-4 py-2 underline underline-offset-4">Done</button>
           </div>
         ) : deliveryRequest ? (
           <div className="space-y-4 text-center text-luxury-champagne">
-            <p>Delivery fee to be confirmed. Wait for the merchant’s approved checkout link before paying.</p>
+            <p className="font-semibold">{deliveryRequest.orderNumber}</p>
+            <p>Eugenia can see your saved request in Orders. She’ll confirm the delivery fee before payment.</p>
             <p>Availability will be checked again before checkout.</p>
-            <a href={deliveryRequest.whatsappUrl} target="_blank" rel="noopener noreferrer" className={actionClass}>
-              <Send size={16} /> Open WhatsApp and press Send
-            </a>
+            {deliveryRequest.whatsappUrl && <>
+              <p>To notify Eugenia, open WhatsApp and press <strong>Send</strong>.</p>
+              <a href={deliveryRequest.whatsappUrl} target="_blank" rel="noopener noreferrer" className={actionClass}>
+                <Send size={16} /> Open WhatsApp notification
+              </a>
+            </>}
             <button type="button" onClick={close} className="px-4 py-2 underline underline-offset-4">Done</button>
           </div>
         ) : (
@@ -236,7 +227,7 @@ const CheckoutModal = ({ isOpen, onClose, cartItems, receipt, onOrderSaved, deli
                   <fieldset className="space-y-3">
                     <legend className={headingClass}>Fulfilment</legend>
                     {approvedDelivery ? (
-                      <p className="text-sm text-white break-words">{quote.destination.area} · {quote.destination.address} · Landmark: {quote.destination.landmark}</p>
+                      <p className="text-sm text-white break-words">{quote.orderNumber} · {quote.destination.area} · {quote.destination.address} · Landmark: {quote.destination.landmark}</p>
                     ) : <>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                       {[['pickup', 'Pickup · Free'], ['delivery', 'Delivery']].map(([value, label]) => (
@@ -307,10 +298,10 @@ const CheckoutModal = ({ isOpen, onClose, cartItems, receipt, onOrderSaved, deli
 
                 {!needsDestination && <p className="text-sm text-luxury-champagne/80">{awaitingDeliveryFee
                   ? 'The merchant will confirm your delivery fee in WhatsApp before you pay.'
-                  : <>After saving, press <strong>Send</strong> in WhatsApp. We’ll verify your payment manually.</>}</p>}
+                  : 'We’ll verify your payment manually after you save the order.'}</p>}
                 <button type="submit" disabled={submitting || needsDestination} className={actionClass}>
                   <Send size={16} />
-                  {submitting ? 'Saving…' : attempt.current ? 'Retry submission' : awaitingDeliveryFee ? 'Request delivery quote' : 'Save order and open WhatsApp'}
+                  {submitting ? 'Saving…' : attempt.current ? 'Retry submission' : awaitingDeliveryFee ? 'Save purchase request' : 'Save order'}
                 </button>
               </>
             )}
