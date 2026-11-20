@@ -1,5 +1,5 @@
 const { randomUUID } = require('crypto');
-const { checkoutError, cleanText, toE164 } = require('./checkout');
+const { checkoutError, cleanText, isExactPesewaAmount, toE164, toPesewas } = require('./checkout');
 
 const collections = ['women', 'men', 'unisex', 'bath-body-works', 'gift-sets', 'affordable', '100ml'];
 const collectionIds = (storefront) => storefront?.collectionDefinitions?.map(item => item.id) ?? collections;
@@ -21,12 +21,27 @@ const optionalNumber = (value, min, max, field, integer = false) => {
   }
   return number;
 };
-const price = (value, field) => optionalNumber(value, 0.01, 9999999.99, field);
-const checkedSale = (value, regular) => {
-  const sale = price(value, 'Sale price');
-  if (sale !== null && (regular === null || sale >= regular)) invalid('Sale price must be below the regular price.');
-  return sale;
-};
+function sellingPrice(value) {
+  if (value === '' || value == null) return null;
+  const raw = String(value).trim();
+  if (!['number', 'string'].includes(typeof value) || !/^(?:\d+(?:\.\d{0,2})?|\.\d{1,2})$/.test(raw)) {
+    invalid('Enter a positive selling price in Ghana cedis, with up to two decimal places.');
+  }
+  const [whole, fraction = ''] = raw.split('.');
+  const cents = toPesewas(`${whole || '0'}.${fraction.padEnd(2, '0')}`);
+  if (!(cents > 0)) invalid('Enter a selling price greater than zero.');
+  if (!isExactPesewaAmount(cents)) {
+    invalid('This selling price exceeds the exact currency precision supported by checkout.');
+  }
+  return cents / 100;
+}
+
+// An older product editor may still submit the regular and displayed sale price together.
+function submittedPrice(fields, current) {
+  if (fields.sellingPrice !== undefined) return fields.sellingPrice;
+  if (fields.salePrice != null && fields.salePrice !== '') return fields.salePrice;
+  return fields.price === undefined ? current?.price : fields.price;
+}
 
 const effectivePrice = (item) => item.salePrice ?? item.price;
 const productAvailable = (product) => product.enabled !== false && (
@@ -53,13 +68,12 @@ function normalizeVariants(value) {
     if (typeof id !== 'string' || !/^[a-zA-Z0-9_-]{1,64}$/.test(id) || ids.has(id)) invalid('Variant IDs must be unique.');
     ids.add(id);
     const label = text(variant.label, 80, 'Variant name');
-    const regular = price(variant.price, 'Variant price');
+    const price = sellingPrice(submittedPrice(variant));
     const stockQuantity = optionalNumber(variant.stockQuantity, 0, 2147483647, 'Variant stock quantity', true);
-    if (!label || regular === null || stockQuantity === null) invalid('Enter a name, price and stock quantity for every variant.');
+    if (!label || price === null || stockQuantity === null) invalid('Enter a name, selling price and stock quantity for every variant.');
     return {
-      id, label, price: regular, stockQuantity,
-      sizeMl: optionalNumber(variant.sizeMl, 0.01, 999999.99, 'Variant size'),
-      salePrice: checkedSale(variant.salePrice, regular)
+      id, label, price, stockQuantity,
+      sizeMl: optionalNumber(variant.sizeMl, 0.01, 999999.99, 'Variant size')
     };
   });
 }
@@ -86,10 +100,11 @@ function productPayload(body, current = {}, allowedCollections = collections) {
   );
   if (category === null) invalid('Choose a valid legacy category.');
   const variants = body.variants === undefined ? current.variants || [] : normalizeVariants(body.variants);
-  const regular = body.price === undefined ? current.price ?? null : price(body.price, 'Price');
-  if (!variants.length && !(regular > 0)) invalid('Enter a price or add a priced variant.');
-  const basePrice = regular ?? Math.min(...variants.map(variant => variant.price));
-  const salePrice = checkedSale(body.salePrice === undefined ? current.salePrice : body.salePrice, basePrice);
+  const updatesPrice = ['sellingPrice', 'price', 'salePrice'].some(field => body[field] !== undefined);
+  const price = updatesPrice ? sellingPrice(submittedPrice(body, current)) : current.price;
+  const salePrice = updatesPrice ? null : current.salePrice ?? null;
+  if (!variants.length && !((salePrice ?? price) > 0)) invalid('Enter a selling price or add a priced variant.');
+  const basePrice = price ?? salePrice ?? Math.min(...variants.map(effectivePrice));
   let assigned = current.collections ?? null;
   if (body.collections !== undefined) {
     if (!Array.isArray(body.collections) || body.collections.length > 64 || body.collections.some(value => !allowedCollections.includes(value))) {

@@ -31,6 +31,8 @@ const toPesewas = (value) => {
   const cents = Number(whole) * 100 + Number(fraction.slice(0, 2).padEnd(2, '0'));
   return (sign ? -1 : 1) * (cents + (Number(fraction[2] || 0) >= 5 ? 1 : 0));
 };
+const isExactPesewaAmount = (cents) => Number.isSafeInteger(cents) &&
+  toPesewas(cents / 100) === cents && toPesewas((cents / 100).toFixed(2)) === cents;
 const formatCurrency = (value) => `GH₵${Number(value || 0).toFixed(2)}`;
 const hash = (value) => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const cartPriceKey = (items) => hash(items.map(({ productId, variantId, quantity, unitPrice }) =>
@@ -133,7 +135,7 @@ function buildQuote(quantities, products, settings, { payment = true } = {}) {
       ...(option.sizeMl ? { sizeMl: option.sizeMl } : {})
     };
   });
-  if (subtotal <= 0 || !Number.isSafeInteger(subtotal + deliveryFee)) {
+  if (subtotal <= 0 || !isExactPesewaAmount(subtotal) || !isExactPesewaAmount(subtotal + deliveryFee)) {
     throw checkoutError(409, 'The cart total is unavailable. Review your cart and try again.');
   }
 
@@ -151,6 +153,6 @@ function buildQuote(quantities, products, settings, { payment = true } = {}) {
 }
 
 module.exports = {
-  campus, campusDeliveryFee, pickupLocation, cleanText, toE164, toGhanaPhone, toPesewas, formatCurrency,
+  campus, campusDeliveryFee, pickupLocation, cleanText, toE164, toGhanaPhone, toPesewas, isExactPesewaAmount, formatCurrency,
   hash, cartPriceKey, checkoutError, parseItems, parseOrder, buildQuote
 };

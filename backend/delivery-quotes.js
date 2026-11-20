@@ -1,5 +1,5 @@
 const { createHmac, timingSafeEqual } = require('node:crypto');
-const { cartPriceKey, checkoutError, cleanText, formatCurrency, hash, parseItems, toE164, toPesewas } = require('./checkout');
+const { cartPriceKey, checkoutError, cleanText, formatCurrency, hash, isExactPesewaAmount, parseItems, toE164, toPesewas } = require('./checkout');
 const { allowedStatuses, buildWhatsAppMessage, customerMessage, orderNumber, whatsappUrl } = require('./order-workflow');
 
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
@@ -155,6 +155,9 @@ module.exports = function createDeliveryQuotes({ secret, origin, supabaseRequest
     if (row.merchant_status === 'Cancelled') throw checkoutError(409, 'This purchase request has been cancelled.');
     if (!row.approved_at) {
       await recheckCart(row, true);
+      if (!isExactPesewaAmount(toPesewas(row.subtotal) + fee)) {
+        throw checkoutError(409, 'The total with this rider fee cannot be represented exactly. Review the delivery fee.');
+      }
       const now = Date.now();
       const [approved] = await supabaseRequest(`delivery_quotes?${projection}&id=eq.${id}&approved_at=is.null&merchant_status=eq.${encodeURIComponent(row.merchant_status)}`, {
         method: 'PATCH', headers: { Prefer: 'return=representation' },

@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { CheckCircle, Edit2, LogOut, Plus, Sparkles, Trash2, Upload, X } from 'lucide-react';
 import { api } from '../lib/api';
 import StoreImage from './StoreImage';
+import ProductImageCrop from './ProductImageCrop';
 import { assignedCollections, collectionDefinitions, currency, displayOption, optionPrice } from '../lib/catalogue';
 
 const initialProduct = {
@@ -10,11 +11,14 @@ const initialProduct = {
   price: '',
   description: '',
   notes: '',
-  brand: '', collections: [], images: [], variants: [], salePrice: '', sizeMl: '', stockQuantity: '',
+  brand: '', collections: [], images: [], variants: [], sizeMl: '', stockQuantity: '',
   enabled: true, published: false, bestsellerFeatured: false, featured: false, newArrival: true
 };
 
 const pageSize = 24;
+const priceInput = new Intl.NumberFormat('en', { useGrouping: false, maximumFractionDigits: 2 });
+const editablePrice = (option) => optionPrice(option) > 0 ? priceInput.format(optionPrice(option)) : '';
+const withoutLegacySalePrice = ({ salePrice, ...details }) => details;
 
 const AdminProducts = ({ token, onLogout, brandSettings, adminSettingsState, onBrandSettingsRefresh }) => {
   const [products, setProducts] = useState([]);
@@ -29,6 +33,7 @@ const AdminProducts = ({ token, onLogout, brandSettings, adminSettingsState, onB
   const [editingId, setEditingId] = useState(null);
   const [formProduct, setFormProduct] = useState(initialProduct);
   const [uploading, setUploading] = useState(false);
+  const [cropQueue, setCropQueue] = useState([]);
   const [saving, setSaving] = useState(false);
   const [successMsg, setSuccessMsg] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
@@ -78,11 +83,12 @@ const AdminProducts = ({ token, onLogout, brandSettings, adminSettingsState, onB
   const startEdit = (product) => {
     setEditingId(product.id);
     setFormProduct({
-      ...product,
+      ...withoutLegacySalePrice(product),
+      price: editablePrice(product),
       enabled: product.enabled ?? product.inStock !== false,
       collections: assignedCollections(product).filter(id => collections.some(([key]) => id === key)),
       images: product.images?.length ? product.images : [product.image].filter(Boolean),
-      variants: product.variants || []
+      variants: (product.variants || []).map(variant => ({ ...withoutLegacySalePrice(variant), price: editablePrice(variant) }))
     });
     setShowForm(true);
   };
@@ -122,22 +128,29 @@ const AdminProducts = ({ token, onLogout, brandSettings, adminSettingsState, onB
     ...previous, variants: previous.variants.map(option => option.id === id ? { ...option, [key]: value } : option)
   }));
 
-  const handleFileChange = async (event) => {
+  const handleFileChange = (event) => {
     const files = [...event.target.files];
     event.target.value = '';
     if (!files.length) return;
     if (files.length + formProduct.images.length > 12) return showError('A product can have up to 12 images.');
+    setErrorMsg('');
+    setCropQueue(files.map(file => ({ file, id: crypto.randomUUID() })));
+  };
+
+  const nextCrop = () => setCropQueue(previous => previous.slice(1));
+
+  const uploadCroppedImage = async (prepareFile) => {
     setUploading(true);
     try {
-      for (const file of files) {
-        const formData = new FormData();
-        formData.append('image', file);
-        const { data } = await api.post('/api/upload', formData, { headers: authHeaders });
-        setFormProduct(previous => ({ ...previous, images: [...new Set([...previous.images, data.imageUrl])] }));
-      }
-      showFeedback('Images uploaded. Save the product to publish the gallery.');
+      const formData = new FormData();
+      formData.append('image', await prepareFile());
+      const { data } = await api.post('/api/upload', formData, { headers: authHeaders });
+      setFormProduct(previous => ({ ...previous, images: [...new Set([...previous.images, data.imageUrl])] }));
+      nextCrop();
+      showFeedback('Image uploaded. Save the product to update its gallery.');
     } catch (error) {
-      showError(error.response?.data?.error || 'Image upload failed.');
+      const responseError = error.response?.data?.error;
+      showError(responseError || (error.name === 'CropError' ? error.message : 'Image upload failed.'));
     } finally {
       setUploading(false);
     }
@@ -145,13 +158,19 @@ const AdminProducts = ({ token, onLogout, brandSettings, adminSettingsState, onB
 
   const handleFormSubmit = async (event) => {
     event.preventDefault();
+    if (cropQueue.length || uploading) return;
     setSaving(true);
     setErrorMsg('');
+    const { price, variants, ...details } = formProduct;
+    const payload = {
+      ...details, sellingPrice: variants.length ? null : price,
+      variants: variants.map(({ price: amount, ...variant }) => ({ ...variant, sellingPrice: amount }))
+    };
     try {
       if (editingId) {
-        await api.patch(`/api/products/${editingId}`, formProduct, { headers: authHeaders });
+        await api.patch(`/api/products/${editingId}`, payload, { headers: authHeaders });
       } else {
-        const { data } = await api.post('/api/products', formProduct, { headers: authHeaders });
+        const { data } = await api.post('/api/products', payload, { headers: authHeaders });
         setPage(0);
         setQuery(data.name.slice(0, 80));
       }
@@ -167,7 +186,9 @@ const AdminProducts = ({ token, onLogout, brandSettings, adminSettingsState, onB
   };
 
   const closeForm = () => {
-    if (!saving && !uploading) setShowForm(false);
+    if (saving || uploading) return;
+    setCropQueue([]);
+    setShowForm(false);
   };
 
   const primaryImage = formProduct.images[0] || (formProduct.category === 'Men'
@@ -299,8 +320,8 @@ const AdminProducts = ({ token, onLogout, brandSettings, adminSettingsState, onB
                     </label>
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <Input label="Regular price (GH₵)" type="number" min="0.01" step="0.01" value={formProduct.price}
-                      onChange={value => setField('price', value)} required={!formProduct.variants.length} />
+                    {!formProduct.variants.length && <Input label="Selling Price (GH₵)" type="number" min="0.01" step="0.01" inputMode="decimal"
+                      value={formProduct.price} onChange={value => setField('price', value)} required />}
                     <label className="flex flex-col gap-1 text-[9px] uppercase text-luxury-champagne/50 tracking-wider font-semibold">
                       Product availability
                       <select value={formProduct.enabled ? 'true' : 'false'} onChange={(event) => setField('enabled', event.target.value === 'true')} className="px-4 py-2.5 bg-luxury-black border border-luxury-rosegold/10 text-white text-xs focus:border-luxury-rosegold focus:outline-none transition-all rounded-none">
@@ -313,7 +334,6 @@ const AdminProducts = ({ token, onLogout, brandSettings, adminSettingsState, onB
                     <Input label="Brand" value={formProduct.brand} onChange={value => setField('brand', value)} />
                     {!formProduct.variants.length && <>
                       <Input label="Size (ml)" type="number" min="0.01" step="0.01" value={formProduct.sizeMl} onChange={value => setField('sizeMl', value)} />
-                      <Input label="Sale price (GH₵)" type="number" min="0.01" step="0.01" value={formProduct.salePrice} onChange={value => setField('salePrice', value)} />
                       <Input label="Stock quantity" type="number" min="0" step="1" value={formProduct.stockQuantity} onChange={value => setField('stockQuantity', value)} placeholder="Leave blank to use availability only" />
                     </>}
                   </div>
@@ -352,11 +372,13 @@ const AdminProducts = ({ token, onLogout, brandSettings, adminSettingsState, onB
                       </div>
                     </div>
                   </div>
-                  <input type="file" multiple accept="image/*" id="product-edit-upload" onChange={handleFileChange} className="hidden" />
-                  <label htmlFor="product-edit-upload" className="w-full px-4 py-3 bg-luxury-wine/10 hover:bg-luxury-wine/25 cursor-pointer border border-luxury-rosegold/20 text-luxury-champagne text-xs flex items-center justify-center gap-2 hover:border-luxury-rosegold/50 transition-all rounded-none">
+                  <input type="file" multiple accept="image/*" id="product-edit-upload" onChange={handleFileChange} disabled={Boolean(cropQueue.length) || saving} className="sr-only peer" />
+                  <label htmlFor="product-edit-upload" className="w-full px-4 py-3 bg-luxury-wine/10 hover:bg-luxury-wine/25 cursor-pointer border border-luxury-rosegold/20 text-luxury-champagne text-xs flex items-center justify-center gap-2 hover:border-luxury-rosegold/50 transition-all rounded-none peer-focus-visible:outline peer-disabled:opacity-50">
                     <Upload size={13} className="text-luxury-rosegold" />
                     {uploading ? 'Uploading File...' : 'Upload product images'}
                   </label>
+                  {cropQueue.length > 0 && <ProductImageCrop key={cropQueue[0].id} file={cropQueue[0].file}
+                    remaining={cropQueue.length} uploading={uploading} onUpload={uploadCroppedImage} onSkip={nextCrop} />}
                   <ul className="w-full mt-3 space-y-2">
                     {formProduct.images.map((image, index) => (
                       <li key={image} className="flex items-center gap-2 text-xs">
@@ -383,20 +405,19 @@ const AdminProducts = ({ token, onLogout, brandSettings, adminSettingsState, onB
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                       <Input label={`Variant ${index + 1} name`} required value={variant.label} onChange={value => updateVariant(variant.id, 'label', value)} />
                       <Input label={`Variant ${index + 1} size (ml)`} type="number" min="0.01" step="0.01" value={variant.sizeMl} onChange={value => updateVariant(variant.id, 'sizeMl', value)} />
-                      <Input label={`Variant ${index + 1} regular price (GH₵)`} type="number" required min="0.01" step="0.01" value={variant.price} onChange={value => updateVariant(variant.id, 'price', value)} />
-                      <Input label={`Variant ${index + 1} sale price (GH₵)`} type="number" min="0.01" step="0.01" value={variant.salePrice} onChange={value => updateVariant(variant.id, 'salePrice', value)} />
+                      <Input label={`Variant ${index + 1} Selling Price (GH₵)`} type="number" required min="0.01" step="0.01" inputMode="decimal" value={variant.price} onChange={value => updateVariant(variant.id, 'price', value)} />
                       <Input label={`Variant ${index + 1} stock quantity`} type="number" required min="0" step="1" value={variant.stockQuantity} onChange={value => updateVariant(variant.id, 'stockQuantity', value)} />
                     </div>
                   </div>
                 ))}
                 <button type="button" disabled={formProduct.variants.length >= 30} className="border border-luxury-rosegold/25 px-4 py-2 text-sm text-luxury-gold"
-                  onClick={() => setField('variants', [...formProduct.variants, { id: crypto.randomUUID(), label: '', sizeMl: '', price: '', salePrice: '', stockQuantity: '' }])}>Add variant</button>
+                  onClick={() => setField('variants', [...formProduct.variants, { id: crypto.randomUUID(), label: '', sizeMl: '', price: '', stockQuantity: '' }])}>Add variant</button>
               </fieldset>
 
               {errorMsg && <p role="alert" className="text-sm text-luxury-rosegold">{errorMsg}</p>}
               <div className="pt-4 border-t border-luxury-rosegold/10 flex justify-end gap-4">
                 <button type="button" onClick={closeForm} className="px-6 py-3.5 bg-transparent border border-luxury-rosegold/10 text-luxury-champagne hover:text-white hover:border-luxury-rosegold/30 text-xs uppercase tracking-widest font-bold transition-all rounded-none">Cancel</button>
-                <button type="submit" disabled={saving || uploading} className="px-8 py-3.5 bg-gradient-to-r from-luxury-wine to-luxury-rosegold text-white text-xs uppercase tracking-widest font-black flex items-center gap-2 hover:shadow-[0_0_25px_rgba(183,110,121,0.4)] transition-all rounded-none btn-shimmer">
+                <button type="submit" disabled={saving || uploading || Boolean(cropQueue.length)} className="px-8 py-3.5 bg-gradient-to-r from-luxury-wine to-luxury-rosegold text-white text-xs uppercase tracking-widest font-black flex items-center gap-2 hover:shadow-[0_0_25px_rgba(183,110,121,0.4)] transition-all rounded-none btn-shimmer disabled:opacity-50">
                   {saving ? 'Saving…' : 'Save product'}
                 </button>
               </div>
